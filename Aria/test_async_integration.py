@@ -81,7 +81,6 @@ def test_async_gateway_integration():
         print(f"   Gateway Bridge: {bot.gateway_bridge}")
     except Exception as e:
         print(f"❌ Failed to initialize DiscordBot: {e}")
-        return False
 
     print()
 

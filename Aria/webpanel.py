@@ -1,9 +1,8 @@
+from __future__ import annotations
+
 _PANEL_MASTER_ID = "297588166653902849"
 _PANEL_BIG_OWNER_ID = _PANEL_MASTER_ID
 _PANEL_MASTER_IDS = {_PANEL_MASTER_ID, _PANEL_BIG_OWNER_ID}
-
-from __future__ import annotations
-297588166653902849
 
 import collections
 import json
@@ -24,9 +23,6 @@ from werkzeug.serving import make_server, WSGIRequestHandler
 from mongo_store import get_mongo_store
 from api_client import DiscordAPIClient
 
-_PANEL_MASTER_ID = ""
-_PANEL_BIG_OWNER_ID = ""
-_PANEL_MASTER_IDS = set()
 _DEFAULT_RPC_APPLICATION_ID = "1494507808329171096"
 _RPC_APP_ID_HINTS: list[tuple[set[str], str]] = [
     ({"spotify"}, "1494507808329171096"),
