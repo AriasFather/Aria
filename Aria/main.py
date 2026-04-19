@@ -1317,16 +1317,29 @@ def main():
         return
     
 
-    # --- Singleton async gateway/host guard ---
+
+    # --- Stronger singleton async gateway/host guard ---
     # Prevent double hosting/duplicate async gateway startup
     import host as host_mod
     instance_owner_id = config.get("owner_id") or os.environ.get("HOSTED_OWNER_ID")
     if hasattr(host_mod, "host_manager") and instance_owner_id:
         with host_mod.host_manager.lock:
-            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id):
+            # Check both active_tokens and processes for this owner
+            already_active = False
+            for entry in host_mod.host_manager.active_tokens.values():
+                if str(entry.get("owner")) == str(instance_owner_id):
+                    already_active = True
+                    break
+            if not already_active:
+                for entry in host_mod.host_manager.processes.values():
+                    if hasattr(entry, "owner") and str(entry.owner) == str(instance_owner_id):
+                        already_active = True
+                        break
+            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id) or already_active:
                 print(f"[HOSTED] Instance for owner {instance_owner_id} already running. Not starting another gateway.")
                 print("[HOSTED] Gateway loaded (singleton guard active, not connecting bot functions)")
-                return
+                import sys
+                sys.exit(0)
 
     bot = DiscordBot(token, config.get("prefix") or "$", config)
     bot.db = MessageDatabase(os.path.join(os.path.dirname(__file__), "messages.db"))
