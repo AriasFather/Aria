@@ -277,8 +277,9 @@ class DiscordAPIClient:
 
         # Prevent proxy rotation for dashboard API requests
         dashboard_endpoints = ["/api/bot", "/api/dashboard", "/dashboard", "/api/panel", "/api/webpanel"]
-        if not any(endpoint.startswith(dash) for dash in dashboard_endpoints):
-            # Rotate proxy if available (25% chance)
+        is_dashboard = any(endpoint.startswith(dash) for dash in dashboard_endpoints)
+        # Prevent proxy rotation and spoof/rotation fallback for dashboard API requests
+        if not is_dashboard:
             if self.header_spoofer.proxy_manager and random.random() < 0.25:
                 try:
                     new_proxy = self.header_spoofer.proxy_manager.get_random_proxy()
@@ -286,6 +287,10 @@ class DiscordAPIClient:
                         self.session.proxies.update(new_proxy)
                 except Exception:
                     pass
+
+        # Patch: Disable captcha spoof/rotation fallback for dashboard endpoints
+        if is_dashboard and self.captcha_solver and getattr(self.captcha_solver, 'spoof_only', False):
+            self.captcha_solver.spoof_only = False
 
         url = f"https://discord.com/api/v9{endpoint}"
         request_headers = self.header_spoofer.get_protected_headers(self.token)
