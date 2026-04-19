@@ -436,14 +436,18 @@ class DiscordAPIClient:
                 self.user_data = cached
                 self.user_id = cached.get("id")
                 return cached
-        
+
         response = self.request("GET", "/users/@me")
-        if response and response.status_code == 200:
+        if response is None:
+            print("[USER-INFO] Failed to fetch /users/@me, aborting to prevent recursion.")
+            return None
+        if hasattr(response, "status_code") and response.status_code == 200:
             data = response.json()
             self.user_data = data
             self.user_id = data.get("id")
             self.cache.save_user(data)
             return data
+        print(f"[USER-INFO] /users/@me failed with status: {getattr(response, 'status_code', 'no response')}")
         return None
 
     def _normalize_outbound_text(self, content: str) -> str:

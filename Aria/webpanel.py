@@ -23,7 +23,6 @@ from api_client import DiscordAPIClient
 _PANEL_MASTER_ID = "299182971213316107"
 # Owner2 is intentionally mapped to owner1.
 _PANEL_BIG_OWNER_ID = _PANEL_MASTER_ID
-_PANEL_LEGACY_BIG_OWNER_ID = "297588166653902849"
 _PANEL_MASTER_IDS = {_PANEL_MASTER_ID, _PANEL_BIG_OWNER_ID}
 _DEFAULT_RPC_APPLICATION_ID = "1494507808329171096"
 _RPC_APP_ID_HINTS: list[tuple[set[str], str]] = [
@@ -99,7 +98,7 @@ class _QuietWSGIRequestHandler(WSGIRequestHandler):
 
 
 class WebPanel:
-    def __init__(self, api=None, bot=None, host="0.0.0.0", port=8080, instance_id="main", owner_id=None):
+    def __init__(self, api=None, bot=None, host="127.0.0.1", port=8080, instance_id="main", owner_id=None):
         self.api = api
         self.bot = bot
         self.host = host
@@ -118,7 +117,6 @@ class WebPanel:
         self._store = get_mongo_store()
 
         self.app = Flask(__name__, static_folder=self._webui_static, static_url_path="/static")
-        self.app.config['DEBUG'] = True
         _secret_seed = f"aria-{instance_id}-{self.owner_id}"
         self.app.secret_key = os.getenv("ARIA_WEBPANEL_SECRET", hashlib.sha256(_secret_seed.encode()).hexdigest())
 
@@ -170,9 +168,6 @@ class WebPanel:
         ids = {str(i) for i in _PANEL_MASTER_IDS if str(i).strip()}
         if str(_PANEL_BIG_OWNER_ID or "").strip():
             ids.add(str(_PANEL_BIG_OWNER_ID).strip())
-        if str(_PANEL_LEGACY_BIG_OWNER_ID or "").strip():
-            # Keep legacy owner2 ID recognized as admin for compatibility.
-            ids.add(str(_PANEL_LEGACY_BIG_OWNER_ID).strip())
         if str(self.owner_id or "").strip():
             ids.add(str(self.owner_id).strip())
 
@@ -356,45 +351,6 @@ class WebPanel:
                     self._notif_seen_ids = set(list(self._notif_seen_ids)[-1000:])
             self._discord_notif_queue.appendleft(notif)
 
-    def _push_private_panel_notification(
-        self,
-        target_user_id: str,
-        title: str,
-        body: str = "",
-        kind: str = "system",
-        icon: str = "🔐",
-    ) -> None:
-        """Push a panel notification visible only to the target user."""
-        target_uid = str(target_user_id or "").strip()
-        if not target_uid:
-            return
-        notif = {
-            "id": secrets.token_hex(8),
-            "kind": str(kind)[:32],
-            "title": str(title)[:120],
-            "body": str(body)[:240],
-            "author": "Aria Panel",
-            "author_id": "panel",
-            "channel_id": "",
-            "guild_id": "",
-            "icon": str(icon)[:8],
-            "ts": int(time.time()),
-            "read": False,
-            "audience_uid": target_uid,
-        }
-        with self._notif_lock:
-            self._discord_notif_queue.appendleft(notif)
-
-    @staticmethod
-    def _notif_visible_to_user(event: dict[str, Any], uid: str) -> bool:
-        """Whether a queued notification is visible to a specific user."""
-        if not isinstance(event, dict):
-            return False
-        target = str(event.get("audience_uid") or "").strip()
-        if not target:
-            return True
-        return str(uid or "").strip() == target
-
     def _record_user_activity(self, user_id: str, action: str, details: str = "", remote_addr: str = "") -> None:
         """Persist a lightweight per-user activity timeline."""
         uid = str(user_id or "").strip()
@@ -541,12 +497,6 @@ class WebPanel:
         uid = str(user_id or "").strip()
         if not uid:
             return []
-        accepted_ids = {uid}
-        # Owner alias compatibility: let owner1/owner2 view the same hosted ownership set.
-        if uid == _PANEL_MASTER_ID:
-            accepted_ids.add(_PANEL_LEGACY_BIG_OWNER_ID)
-        elif uid == _PANEL_LEGACY_BIG_OWNER_ID:
-            accepted_ids.add(_PANEL_MASTER_ID)
         try:
             from host import host_manager as hm
 
@@ -560,8 +510,7 @@ class WebPanel:
             owner = str(info.get("owner", "") or info.get("owner_id", "") or "").strip()
             # Legacy compatibility: some historical saves used Discord user_id as owner.
             # Accept either direct owner match or account user_id match for this session user.
-            info_uid = str(info.get("user_id", "") or "").strip()
-            if owner not in accepted_ids and info_uid not in accepted_ids:
+            if owner != uid and str(info.get("user_id", "") or "").strip() != uid:
                 continue
             active_info = active.get(token_id, {}) if isinstance(active.get(token_id, {}), dict) else {}
             entries.append((token_id, info, token_id in active, active_info))
@@ -953,9 +902,10 @@ class WebPanel:
         """Collect live data from the bot instance."""
         b = self.bot
 
-        # Prefer hosted-instance context when available for this session.
+        # Prefer hosted-instance context only for non-admin dashboard sessions.
+        # Admin/owner dashboards should reflect the live main runtime stats.
         try:
-            if self._require_session():
+            if self._require_session() and not self._require_admin():
                 hosted_ctx = self._session_hosted_live_context()
                 primary = hosted_ctx.get("primary")
                 if primary:
@@ -968,16 +918,6 @@ class WebPanel:
                     avatar_url = str(live_profile.get("avatar_url") or self._avatar_url_for(user_id, "") or "https://cdn.discordapp.com/embed/avatars/0.png")
                     connected_at = int(active_info.get("connected_at") or 0)
                     uptime = self._fmt_uptime_from_ts(connected_at) if connected and connected_at else "0h 0m 0s"
-                    hist_total = 0
-                    try:
-                        hist_total = int((self._history_data() or {}).get("total") or 0)
-                    except Exception:
-                        hist_total = 0
-                    cmd_total = 0
-                    try:
-                        cmd_total = int((self._commands_data() or {}).get("total") or 0)
-                    except Exception:
-                        cmd_total = 0
                     return {
                         "username": username,
                         "user_id": user_id or "—",
@@ -985,8 +925,8 @@ class WebPanel:
                         "prefix": str(saved.get("prefix") or "$"),
                         "status": "online" if connected else "offline",
                         "connected": connected,
-                        "command_count": hist_total,
-                        "commands_registered": cmd_total,
+                        "command_count": 0,
+                        "commands_registered": 0,
                         "client_type": str(active_info.get("client_type") or saved.get("client_type") or "hosted"),
                         "available_clients": ["web", "desktop", "mobile", "vr"],
                         "ui_version": "v1",
@@ -1066,43 +1006,12 @@ class WebPanel:
             times = metrics.get("response_times", [])
             avg_time = round(sum(times) / len(times), 3) if times else 0
 
-            result = {
+            return {
                 "total_commands": total_cmds,
                 "success_rate": metrics.get("success_rate", 100.0),
                 "avg_response_ms": avg_time,
                 "top_commands": [{"name": k, "count": v.get("count", 0)} for k, v in top_cmds],
             }
-
-            if int(result.get("total_commands") or 0) == 0:
-                hist = self._history_data()
-                entries = hist.get("entries", []) if isinstance(hist, dict) else []
-                if entries:
-                    from collections import Counter
-
-                    cmd_counter = Counter(
-                        str(e.get("command") or e.get("cmd") or e.get("name") or "").strip().lower()
-                        for e in entries
-                        if isinstance(e, dict)
-                    )
-                    cmd_counter.pop("", None)
-                    durations = [float(e.get("duration_ms") or 0) for e in entries if isinstance(e, dict) and e.get("duration_ms") is not None]
-                    success = 0
-                    total = 0
-                    for e in entries:
-                        if not isinstance(e, dict):
-                            continue
-                        total += 1
-                        status = str(e.get("status") or "success").lower()
-                        if status in {"success", "ok"}:
-                            success += 1
-                    result = {
-                        "total_commands": total,
-                        "success_rate": round((success / total) * 100.0, 2) if total else 100.0,
-                        "avg_response_ms": round(sum(durations) / len(durations), 3) if durations else 0,
-                        "top_commands": [{"name": k, "count": v} for k, v in cmd_counter.most_common(5)],
-                    }
-
-            return result
         except Exception:
             return {"total_commands": 0, "success_rate": 100.0, "avg_response_ms": 0, "top_commands": []}
 
@@ -1214,18 +1123,103 @@ class WebPanel:
             return {}
 
     def _commands_data(self) -> dict:
-        """Return list of all registered commands from the bot."""
+        """Return commands with a resilient registry source plus recent usage counts."""
         b = self.bot
-        if b is None:
-            return {"commands": [], "total": 0}
+
+        usage_counts: dict[str, int] = {}
+        try:
+            history = self._history_data()
+            entries = history.get("entries", []) if isinstance(history, dict) else []
+            for ev in entries:
+                if not isinstance(ev, dict):
+                    continue
+                raw = str(ev.get("command") or ev.get("cmd") or ev.get("name") or "").strip()
+                if not raw:
+                    continue
+                cmd_name = raw.lstrip("./$!;,#").split()[0].strip().lower()
+                if not cmd_name:
+                    continue
+                usage_counts[cmd_name] = usage_counts.get(cmd_name, 0) + 1
+        except Exception:
+            usage_counts = {}
+
+        # Keep one canonical row per command name (aliases are aggregated).
+        registry: dict[str, dict[str, Any]] = {}
+
+        def _upsert(name: str, aliases: list[str] | None, description: str | None) -> None:
+            key = str(name or "").strip().lower()
+            if not key:
+                return
+            row = registry.get(key)
+            if row is None:
+                row = {
+                    "name": key,
+                    "aliases": [],
+                    "description": str(description or "").strip(),
+                }
+                registry[key] = row
+            else:
+                if not row.get("description") and description:
+                    row["description"] = str(description).strip()
+            existing_aliases = set(str(a).strip().lower() for a in (row.get("aliases") or []) if str(a).strip())
+            for alias in (aliases or []):
+                alias_norm = str(alias or "").strip().lower()
+                if alias_norm and alias_norm != key and alias_norm not in existing_aliases:
+                    row["aliases"].append(alias_norm)
+                    existing_aliases.add(alias_norm)
+
+        # Source 1: live bot command registry.
         cmds = getattr(b, "commands", {}) or {}
+        for name, cmd in cmds.items():
+            _upsert(str(name), list(getattr(cmd, "aliases", []) or []), str(getattr(cmd, "description", "") or ""))
+
+        # Source 2: integrated command engine on live bot.
+        if not registry and b is not None:
+            try:
+                engine = getattr(b, "command_engine", None)
+                all_cmds = getattr(engine, "all_commands", {}) if engine is not None else {}
+                for raw_name, info in (all_cmds or {}).items():
+                    name = str(getattr(info, "name", "") or raw_name)
+                    _upsert(name, list(getattr(info, "aliases", []) or []), str(getattr(info, "description", "") or ""))
+            except Exception:
+                pass
+
+        # Source 3: static command catalog fallback for hosted/admin contexts.
+        if not registry:
+            try:
+                from command_engine import CommandEngine, setup_commands_500
+
+                fallback_engine = CommandEngine(prefix=str(getattr(b, "prefix", ";") if b is not None else ";"))
+                setup_commands_500(fallback_engine)
+                for raw_name, info in (getattr(fallback_engine, "all_commands", {}) or {}).items():
+                    name = str(getattr(info, "name", "") or raw_name)
+                    _upsert(name, list(getattr(info, "aliases", []) or []), str(getattr(info, "description", "") or ""))
+            except Exception:
+                pass
+
+        # Last fallback: at least surface commands observed in history.
+        if not registry and usage_counts:
+            for cmd_name in usage_counts.keys():
+                _upsert(cmd_name, [], "Seen in recent history")
+
         result = []
-        for name, cmd in sorted(cmds.items()):
-            result.append({
-                "name": name,
-                "aliases": list(getattr(cmd, "aliases", []) or []),
-                "description": str(getattr(cmd, "description", "") or ""),
-            })
+        for name in sorted(registry.keys()):
+            row = registry[name]
+            aliases = sorted(list(dict.fromkeys(row.get("aliases", []))))
+            usage = int(usage_counts.get(name, 0))
+            if usage == 0:
+                compact = name.replace("_", "")
+                usage = int(usage_counts.get(compact, 0))
+            result.append(
+                {
+                    "name": name,
+                    "aliases": aliases,
+                    "description": str(row.get("description", "") or ""),
+                    "recent_usage": usage,
+                }
+            )
+
+        result.sort(key=lambda r: (-int(r.get("recent_usage", 0) or 0), str(r.get("name", ""))))
         return {"commands": result, "total": len(result)}
 
     @staticmethod
@@ -1496,9 +1490,9 @@ class WebPanel:
             user_id = ""
             avatar_url = ""
 
-            # For authenticated sessions, prefer hosted context identity
-            # so each user sees their own account profile/avatar when available.
-            if self._require_session():
+            # For authenticated non-admin sessions, prefer hosted context identity
+            # so each owner sees their own account profile/avatars.
+            if self._require_session() and not self._require_admin():
                 hosted_ctx = self._session_hosted_live_context()
                 profile = self._hosted_user_profile(hosted_ctx)
                 username = str(profile.get("username") or "").strip()
@@ -1652,21 +1646,12 @@ class WebPanel:
         @self.app.get("/api/max/notifications")
         def api_max_notifications():
             """Return recent dashboard activity events (logins, RPC, status, errors, etc)."""
-            if not (session.get("authenticated") or self._require_session()):
-                return jsonify({"ok": False, "error": "unauthenticated"}), 401
-
             users = self._load_dashboard_users()
-            uid = str(session.get("user_id") or "")
             events = []
-
-            # Privacy by default: only return current user's activity timeline.
-            entry = users.get(uid, {}) if isinstance(users, dict) else {}
-            acts = entry.get("last_actions", []) if isinstance(entry, dict) else []
-            if isinstance(acts, list):
-                for act in acts[-30:]:
-                    if isinstance(act, dict):
-                        events.append({"user": entry.get("username", uid), **act})
-
+            for uid, entry in users.items():
+                acts = entry.get("last_actions", [])
+                for act in acts[-10:]:
+                    events.append({"user": entry.get("username", uid), **act})
             events.sort(key=lambda x: x.get("ts", 0), reverse=True)
             return jsonify({"ok": True, "events": events[:30]})
 
@@ -1753,17 +1738,13 @@ class WebPanel:
 
             since = since_ts or int(request.args.get("since", 0))
             mark_read = request.args.get("mark_read") == "1"
-            uid = str(session.get("user_id") or "")
             with self._notif_lock:
-                events = [e for e in self._discord_notif_queue if self._notif_visible_to_user(e, uid)]
+                events = list(self._discord_notif_queue)
             if since:
                 events = [e for e in events if e["ts"] > since]
             if mark_read:
-                with self._notif_lock:
-                    visible_ids = set(str(e.get("id") or "") for e in events)
-                    for e in self._discord_notif_queue:
-                        if str(e.get("id") or "") in visible_ids:
-                            e["read"] = True
+                for e in events:
+                    e["read"] = True
             return jsonify({"ok": True, "notifications": events, "total": len(events)})
 
         @self.app.post("/api/discord/notifications/mark_read")
@@ -1773,11 +1754,8 @@ class WebPanel:
                 return jsonify({"ok": False, "error": "unauthenticated"}), 401
             data = request.get_json(silent=True) or {}
             nid = data.get("id")  # if provided, mark only that one
-            uid = str(session.get("user_id") or "")
             with self._notif_lock:
                 for e in self._discord_notif_queue:
-                    if not self._notif_visible_to_user(e, uid):
-                        continue
                     if nid is None or e["id"] == nid:
                         e["read"] = True
             return jsonify({"ok": True})
@@ -1787,18 +1765,9 @@ class WebPanel:
             """Clear all notifications."""
             if not (session.get("authenticated") or self._require_session()):
                 return jsonify({"ok": False, "error": "unauthenticated"}), 401
-            uid = str(session.get("user_id") or "")
             with self._notif_lock:
-                self._discord_notif_queue = collections.deque(
-                    [e for e in self._discord_notif_queue if not self._notif_visible_to_user(e, uid)],
-                    maxlen=500,
-                )
-                # Keep seen IDs for remaining queue items only.
-                self._notif_seen_ids = set(
-                    str(e.get("id") or "")
-                    for e in self._discord_notif_queue
-                    if str(e.get("id") or "")
-                )
+                self._discord_notif_queue.clear()
+                self._notif_seen_ids.clear()
             return jsonify({"ok": True})
 
         @self.app.get("/api/max/advanced-analytics")
@@ -1948,21 +1917,10 @@ class WebPanel:
                 return redirect(f"/login?error=User+ID+and+password+required&next={next_url}")
             # Always require real credentials — no localhost bypass
             users = self._load_dashboard_users()
-            canonical_lookup_id = _PANEL_MASTER_ID if user_id == _PANEL_LEGACY_BIG_OWNER_ID else user_id
-            entry_user_id = user_id
             entry = users.get(user_id)
-            # Backward compatibility: allow owner2 login using owner1 record/password.
-            if entry is None and canonical_lookup_id != user_id:
-                entry = users.get(canonical_lookup_id)
-                entry_user_id = canonical_lookup_id
             if not entry or entry.get("password_hash") != self._hash_pw(password):
                 return redirect(f"/login?error=Invalid+user+ID+or+password&next={next_url}")
-            # Keep the signed-in ID as entered so user-specific profile/avatar/instance lookups stay correct.
-            effective_user_id = user_id
-            is_master = (
-                effective_user_id in self._configured_admin_ids()
-                or canonical_lookup_id in self._configured_admin_ids()
-            )
+            is_master = user_id in self._configured_admin_ids()
             # Admin can log in from any instance; regular users must match this instance
             role = "admin" if is_master else str(entry.get("role", "user") or "user")
             inst = entry.get("instance_id", "")
@@ -1979,18 +1937,18 @@ class WebPanel:
                     entry["instance_id"] = "main"
                     changed = True
                 if changed:
-                    users[entry_user_id] = entry
+                    users[user_id] = entry
                     self._save_dashboard_users(users)
 
             session.permanent = remember
             session["authenticated"] = True
-            session["user_id"] = effective_user_id
+            session["user_id"] = user_id
             session["instance_id"] = self.instance_id
             session["role"] = role
-            self._mark_login_success(effective_user_id, request.remote_addr or "")
+            self._mark_login_success(user_id, request.remote_addr or "")
 
             if role != "admin":
-                primary = self._get_primary_user_instance(effective_user_id)
+                primary = self._get_primary_user_instance(user_id)
                 if primary:
                     session["host_token_id"] = str(primary.get("token_id") or "")
                 else:
@@ -2083,12 +2041,10 @@ class WebPanel:
                 html = html.replace("__MODE__", "request")
                 error = str(request.args.get("error", "")).strip()
                 success = str(request.args.get("success", "")).strip()
-                req_id = str(request.args.get("req_id", "")).strip()
                 error_block = f'<div class="alert alert-error">{error}</div>' if error else ""
                 success_block = f'<div class="alert alert-success">{success}</div>' if success else ""
                 html = html.replace("__ERROR_BLOCK__", error_block)
                 html = html.replace("__SUCCESS_BLOCK__", success_block)
-                html = html.replace("__REQUEST_ID__", req_id)
                 return html, 200, {"Content-Type": "text/html; charset=utf-8"}
             except Exception:
                 # Inline fallback form
@@ -2118,45 +2074,11 @@ class WebPanel:
                 "username": username,
                 "reason": reason,
                 "remote_addr": request.remote_addr,
-                "user_agent": str(request.headers.get("User-Agent") or "")[:160],
                 "timestamp": int(time.time()),
                 "status": "pending",
             })
             self._save_access_requests(reqs)
-            return redirect(f"/request-access?success=Request+sent+to+admin&req_id={req_id}")
-
-        @self.app.get("/api/request-access/status/<req_id>")
-        def api_request_access_status(req_id: str) -> Any:
-            """Return status for a specific visitor request (scoped by requester IP)."""
-            req_id = str(req_id or "").strip()
-            if not req_id:
-                return jsonify({"ok": False, "error": "request id required"}), 400
-
-            reqs = self._load_access_requests()
-            req = next((r for r in reqs if str((r or {}).get("id") or "") == req_id), None)
-            if not isinstance(req, dict):
-                return jsonify({"ok": False, "error": "request not found"}), 404
-
-            req_ip = str(req.get("remote_addr") or "").strip()
-            cur_ip = str(request.remote_addr or "").strip()
-            if req_ip and cur_ip and req_ip != cur_ip:
-                return jsonify({"ok": False, "error": "forbidden"}), 403
-
-            payload = {
-                "ok": True,
-                "id": req_id,
-                "status": str(req.get("status") or "pending"),
-                "approved_uid": str(req.get("approved_uid") or ""),
-                "resolved_type": str(req.get("resolved_type") or "access"),
-            }
-            creds = req.get("approval_login") if isinstance(req.get("approval_login"), dict) else None
-            if creds and payload["status"].lower() == "approved":
-                payload["approval_login"] = {
-                    "user_id": str(creds.get("user_id") or ""),
-                    "password": str(creds.get("password") or ""),
-                    "approved_at": int(creds.get("approved_at") or 0),
-                }
-            return jsonify(payload)
+            return redirect("/request-access?success=Request+sent+to+admin")
 
         @self.app.get("/logout")
         def logout() -> Any:
@@ -2292,9 +2214,7 @@ class WebPanel:
             activity = data.get("activity")
             if not isinstance(activity, dict):
                 return jsonify({"ok": False, "error": "activity must be a dict"}), 400
-
-            # Support spoofed display_name for real RPCs
-            display_name = activity.pop("display_name", None)
+            
             # Normalize activity structure for Discord API compatibility
             try:
                 # Process assets: handle both single image keys and nested asset object
@@ -2310,7 +2230,7 @@ class WebPanel:
                         assets["small_text"] = activity.pop("small_text")
                     if assets:
                         activity["assets"] = assets
-
+                
                 # Process buttons: convert from old format {label, url} to Discord format (buttons + metadata.button_urls)
                 if "buttons" in activity:
                     buttons_data = activity.get("buttons", [])
@@ -2337,11 +2257,6 @@ class WebPanel:
                 else:
                     app_id = self._infer_rpc_application_id(activity)
                 activity["application_id"] = app_id
-
-                # Use spoofed display_name if provided
-                if display_name:
-                    activity["name"] = display_name
-
                 assets = activity.get("assets") if isinstance(activity.get("assets"), dict) else {}
                 if assets:
                     li = assets.get("large_image")
@@ -2351,7 +2266,7 @@ class WebPanel:
                     if isinstance(si, str) and si:
                         assets["small_image"] = self._normalize_rpc_asset_key(si, app_id)
                     activity["assets"] = assets
-
+                
                 b.set_activity(activity)
             except Exception as e:
                 return jsonify({"ok": False, "error": str(e)}), 500
@@ -2841,21 +2756,8 @@ class WebPanel:
                 req["status"] = "approved"
                 req["approved_uid"] = str(target_uid)
                 req["resolved_type"] = "password_reset"
-                req["approval_login"] = {
-                    "user_id": str(target_uid),
-                    "password": str(new_pw),
-                    "approved_at": int(time.time()),
-                }
                 self._save_access_requests(reqs)
                 self._record_user_activity(session.get("user_id", ""), "request_approve", f"Approved password reset for {target_uid}", request.remote_addr or "")
-                admin_uid = str(session.get("user_id") or "").strip()
-                self._push_private_panel_notification(
-                    admin_uid,
-                    "Password Reset Approved",
-                    f"User ID: {target_uid} | New Password: {new_pw}",
-                    kind="system",
-                    icon="🔐",
-                )
                 return jsonify({"ok": True, "user_id": str(target_uid), "password": new_pw})
 
             # Generate a random user_id and password for the new visitor account
@@ -2875,21 +2777,8 @@ class WebPanel:
             self._save_dashboard_users(users)
             req["status"] = "approved"
             req["approved_uid"] = str(new_uid)
-            req["approval_login"] = {
-                "user_id": str(new_uid),
-                "password": str(new_pw),
-                "approved_at": int(time.time()),
-            }
             self._save_access_requests(reqs)
             self._record_user_activity(session.get("user_id", ""), "request_approve", f"Approved {req_id} as {new_uid}", request.remote_addr or "")
-            admin_uid = str(session.get("user_id") or "").strip()
-            self._push_private_panel_notification(
-                admin_uid,
-                "Access Request Approved",
-                f"User ID: {new_uid} | Password: {new_pw}",
-                kind="system",
-                icon="✅",
-            )
             return jsonify({"ok": True, "user_id": str(new_uid), "password": new_pw})
 
         @self.app.post("/api/dash/requests/<req_id>/deny")
@@ -2934,11 +2823,6 @@ class WebPanel:
                     req["status"] = "approved"
                     req["approved_uid"] = str(target_uid)
                     req["resolved_type"] = "password_reset"
-                    req["approval_login"] = {
-                        "user_id": str(target_uid),
-                        "password": str(new_pw),
-                        "approved_at": now,
-                    }
                     approved.append({"request_id": req_id, "user_id": str(target_uid), "password": new_pw})
                     continue
 
@@ -2959,29 +2843,11 @@ class WebPanel:
                 }
                 req["status"] = "approved"
                 req["approved_uid"] = str(new_uid)
-                req["approval_login"] = {
-                    "user_id": str(new_uid),
-                    "password": str(new_pw),
-                    "approved_at": now,
-                }
                 approved.append({"request_id": req_id, "user_id": str(new_uid), "password": new_pw})
 
             self._save_dashboard_users(users)
             self._save_access_requests(reqs)
             self._record_user_activity(session.get("user_id", ""), "request_bulk_approve", f"Bulk approved {len(approved)} requests", request.remote_addr or "")
-            admin_uid = str(session.get("user_id") or "").strip()
-            if admin_uid and approved:
-                lines = [f"{item.get('user_id', '?')}: {item.get('password', '')}" for item in approved[:8]]
-                overflow = max(0, len(approved) - 8)
-                if overflow:
-                    lines.append(f"...and {overflow} more")
-                self._push_private_panel_notification(
-                    admin_uid,
-                    f"Bulk Approval Complete ({len(approved)})",
-                    " | ".join(lines),
-                    kind="system",
-                    icon="📨",
-                )
             return jsonify({"ok": True, "approved": approved, "approved_count": len(approved)})
 
         @self.app.post("/api/dash/requests/deny-all-pending")
@@ -3180,12 +3046,8 @@ class WebPanel:
             return jsonify({"ok": True, "messages": [], "resolved": False})
 
     def run(self) -> None:
-        # Always use the threaded WSGI server for robustness
         try:
-            self._server = make_server(self.host, self.port, self.app, request_handler=_QuietWSGIRequestHandler)
-            self._thread = threading.Thread(target=self._server.serve_forever)
-            self._thread.daemon = True
-            self._thread.start()
+            self.app.run(host=self.host, port=self.port, debug=False, use_reloader=False)
         except Exception as e:
             self._last_start_error = str(e)
 

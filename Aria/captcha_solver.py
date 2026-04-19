@@ -71,15 +71,8 @@ class CaptchaSolver:
             else:
                 print("[ERROR] CapSolver support requires capsolver library or requests.")
         elif self.spoof_only:
-            # Only print debug if no key is present and not a dashboard endpoint
-            import inspect
-            stack = inspect.stack()
-            suppress_dashboard = False
-            for frame in stack:
-                if any(x in str(frame.filename) for x in ["dashboard", "web_panel", "webpanel"]):
-                    suppress_dashboard = True
-                    break
-            if not api_key and not suppress_dashboard:
+            # Only print debug if no key is present
+            if not api_key:
                 print("[DEBUG] Captcha spoof/rotation fallback enabled; no solver key required.")
         else:
             if not CaptchaSolver._missing_config_logged:
