@@ -72,10 +72,16 @@ class Config:
                         if os.path.exists(hosted_token_path):
                             with open(hosted_token_path, "r") as tf:
                                 config["token"] = tf.read().strip()
-                    
+
+                    # Warn if captcha_api_key is missing or default
+                    if not config.get("captcha_api_key") or config["captcha_api_key"].startswith("CAP-") and len(config["captcha_api_key"]) < 40:
+                        print("[WARN] captcha_api_key is missing or default in config. Captcha solving may not work.")
+
                     return config
-            except:
+            except Exception as e:
+                print(f"[WARN] Failed to load config: {e}")
                 return self.default_config
+        print("[WARN] config.json not found, using default config.")
         return self.default_config
 
     def save_config(self):

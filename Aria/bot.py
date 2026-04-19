@@ -45,6 +45,8 @@ class DiscordBot:
         captcha_enabled = self.config.get("captcha_enabled", self.config.get("captchaEnabled", False))
         captcha_api_key = self.config.get("captcha_api_key", self.config.get("captchaApiKey", ""))
         captcha_service = self.config.get("captcha_service", self.config.get("captchaService", "2captcha"))
+        print(f"[DEBUG] Loaded captcha_api_key: {captcha_api_key[:6]}...{captcha_api_key[-6:] if captcha_api_key else ''}")
+        print(f"[DEBUG] Loaded captcha_service: {captcha_service}")
         self.api = DiscordAPIClient(token, captcha_api_key, captcha_enabled, captcha_service)
 
         self.customizer = BotCustomizer()
