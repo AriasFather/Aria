@@ -71,9 +71,10 @@ class CaptchaSolver:
             else:
                 print("[ERROR] CapSolver support requires capsolver library or requests.")
         elif self.spoof_only:
-            # Only print debug if no key is present
-            if not api_key:
+            # Only print debug if no key is present, and only once per session
+            if not api_key and not getattr(CaptchaSolver, '_spoof_fallback_logged', False):
                 print("[DEBUG] Captcha spoof/rotation fallback enabled; no solver key required.")
+                CaptchaSolver._spoof_fallback_logged = True
         else:
             if not CaptchaSolver._missing_config_logged:
                 print("[DEBUG] Captcha support not configured or API key missing.")

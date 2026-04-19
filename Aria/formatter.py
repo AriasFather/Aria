@@ -83,6 +83,26 @@ def warning(msg: str) -> str:
     """Format a warning message."""
     return f"{YELLOW}⚠ {msg}{RESET}"
 
+    def nitro_status(status: str, claimed: int, cached: int, last_claimed=None) -> str:
+        """Format Nitro sniper status output."""
+        details = {
+            "Status": str(status),
+            "Claimed": str(claimed),
+            "Cached": str(cached),
+            "Last Claimed": str(last_claimed or "never"),
+        }
+        return status_box("Nitro", details)
+
+    def giveaway_status(status: str, entered: int, won: int, failed: int, last_win=None) -> str:
+        """Format giveaway sniper status output."""
+        details = {
+            "Status": str(status),
+            "Entered": str(entered),
+            "Won": str(won),
+            "Failed": str(failed),
+            "Last Win": str(last_win or "never"),
+        }
+        return status_box("Giveaway", details)
 def nitro_status(status: str, claimed: int, cached: int, last_claimed=None) -> str:
     """Format Nitro sniper status output."""
     details = {
