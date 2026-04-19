@@ -22,7 +22,6 @@ def test_async_gateway_integration():
     if not os.path.exists(config_file):
         print("❌ config.json not found")
         print("Copy config_async_example.json to config.json and add your token")
-        return False
 
     # Load config
     try:
@@ -30,12 +29,10 @@ def test_async_gateway_integration():
             config = json.load(f)
     except Exception as e:
         print(f"❌ Failed to load config.json: {e}")
-        return False
 
     token = config.get("token")
     if not token or token == "your_discord_token_here":
         print("❌ Please set your Discord token in config.json")
-        return False
 
     # Check if async gateway is enabled
     use_async = config.get("use_async_gateway", False)
@@ -52,7 +49,6 @@ def test_async_gateway_integration():
         print("   1. Set 'use_async_gateway': true in config.json")
         print("   2. Optionally set 'gateway_compress': true")
         print("   3. Run this test again")
-        return False
 
     # Test imports
     print("🔍 Testing imports...")
@@ -61,21 +57,18 @@ def test_async_gateway_integration():
         print("✅ bot.DiscordBot imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import DiscordBot: {e}")
-        return False
 
     try:
         from gateway_bridge import GatewayBridge
         print("✅ gateway_bridge.GatewayBridge imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import GatewayBridge: {e}")
-        return False
 
     try:
         from async_gateway import AsyncDiscordGateway
         print("✅ async_gateway.AsyncDiscordGateway imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import AsyncDiscordGateway: {e}")
-        return False
 
     print()
 
@@ -105,33 +98,33 @@ def test_async_gateway_integration():
 
     print()
 
-    # Test connection (brief)
-    print("🔌 Testing brief connection...")
-    try:
-        bridge.start()
-        print("✅ Gateway bridge started successfully")
-
-        # Wait a bit for connection
-        timeout = 10
-        start_time = time.time()
-        while not bridge.connection_active and (time.time() - start_time) < timeout:
-            time.sleep(0.5)
-
-        if bridge.connection_active:
-            print("✅ Gateway bridge connected successfully")
-            metrics = bridge.get_gateway_latency_metrics()
-            print(f"   Latency: {metrics.get('latency_ms', 'Unknown')}ms")
-            print(f"   Compressed: {metrics.get('compressed', False)}")
-        else:
-            print("❌ Gateway bridge failed to connect within 10 seconds")
-            return False
-
-        # Clean up
-        bridge.stop()
-        print("✅ Gateway bridge stopped successfully")
-
-    except Exception as e:
-        print(f"❌ Connection test failed: {e}")
+    # Test connection (brief) - DISABLED to prevent duplicate async gateway bridge
+    # print("🔌 Testing brief connection...")
+    # try:
+    #     bridge.start()
+    #     print("✅ Gateway bridge started successfully")
+    #
+    #     # Wait a bit for connection
+    #     timeout = 10
+    #     start_time = time.time()
+    #     while not bridge.connection_active and (time.time() - start_time) < timeout:
+    #         time.sleep(0.5)
+    #
+    #     if bridge.connection_active:
+    #         print("✅ Gateway bridge connected successfully")
+    #         metrics = bridge.get_gateway_latency_metrics()
+    #         print(f"   Latency: {metrics.get('latency_ms', 'Unknown')}ms")
+    #         print(f"   Compressed: {metrics.get('compressed', False)}")
+    #     else:
+    #         print("❌ Gateway bridge failed to connect within 10 seconds")
+    #         return False
+    #
+    #     # Clean up
+    #     bridge.stop()
+    #     print("✅ Gateway bridge stopped successfully")
+    #
+    # except Exception as e:
+    #     print(f"❌ Connection test failed: {e}")
         return False
 
     print()

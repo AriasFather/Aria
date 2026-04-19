@@ -1,8 +1,9 @@
+MASTER_OWNER_IDS = {"297588166653902849"}
 297588166653902849
 import json
 import time
 
-MASTER_OWNER_IDS = {"299182971213316107"}
+MASTER_OWNER_IDS = set()
 
 class BotCustomizer:
     def __init__(self):
@@ -26,7 +27,7 @@ class BotCustomizer:
             "backup_interval": 3600
         }
         
-        self.theme_custom_id = "ui_theme_customization_299182971213316107_scheme"
+        self.theme_custom_id = ""
         self.active_customizations = []
         self.terminal_emulation = False
         self.color_palette = {

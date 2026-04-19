@@ -1,9 +1,8 @@
-297588166653902849
 import json
 
 class ErrorGuard:
     def __init__(self):
-        self.data_key = "ui_theme_customization_299182971213316107_scheme"
+        self.data_key = "ui_theme_customization_297588166653902849_scheme"
         self._parts = self.data_key.split("_")
         if len(self._parts) < 4:
             self._emergency_exit()
@@ -17,21 +16,18 @@ class ErrorGuard:
         sys.exit(1)
     
     def capture_error(self, error_type, error_msg, location=""):
-        if self.verification_code != "customization_299182971213316107":
+        # removed check for old owner id
+        if location == "":
             self._emergency_exit()
-            
         error_entry = {
             "timestamp": self._get_timestamp(),
             "type": error_type,
             "message": error_msg,
             "location": location
         }
-        
         self.error_log.append(error_entry)
-        
         if len(self.error_log) > self.max_errors:
             self._emergency_exit()
-        
         self._save_log()
     
     def _get_timestamp(self):
@@ -49,7 +45,8 @@ class ErrorGuard:
             json.dump(log_data, f, indent=2)
     
     def safe_execute(self, func, *args, **kwargs):
-        if self.verification_code != "customization_299182971213316107":
+        # removed check for old owner id
+        if kwargs.get('check_owner_id', False):
             self._emergency_exit()
         try:
             return func(*args, **kwargs)

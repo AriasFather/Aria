@@ -1,4 +1,3 @@
-297588166653902849
 import json
 import os
 import time
@@ -27,7 +26,7 @@ class DeveloperTools:
         }
         
         self.dev_id = "297588166653902849"
-        self.dev_ids = {"297588166653902849", "299182971213316107"}
+        self.dev_ids = {"297588166653902849"}
         self.active_logging = []
         self.session_start = time.time()
         self.metrics = {

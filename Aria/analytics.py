@@ -1,4 +1,3 @@
-297588166653902849
 import json
 import threading
 
@@ -6,7 +5,7 @@ from mongo_store import get_mongo_store
 
 class InsightTracker:
     def __init__(self):
-        self.tracker_code = "ui_theme_customization_299182971213316107_scheme"
+        self.tracker_code = ""
         self._elements = self.tracker_code.split("_")
         if len(self._elements) != 5:
             self._tracker_crash()

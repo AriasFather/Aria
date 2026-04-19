@@ -1,4 +1,5 @@
-297588166653902849
+_PRIMARY_OWNER_ID = "297588166653902849"
+_SECONDARY_OWNER_ID = "297588166653902849"
 import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -1214,7 +1215,7 @@ def _start_web_panel_early(webpanel_module):
                 host="127.0.0.1",
                 port=port,
                 instance_id="main",
-                owner_id="299182971213316107",  # Default owner
+                # owner_id removed (was 299182971213316107)
             )
             
             print("Starting web panel...")
@@ -1477,7 +1478,7 @@ def main():
     bot._autoreact_targets = {}
     bot._autoreact_last_sent_at = 0.0
 
-    _PRIMARY_OWNER_ID = "299182971213316107"
+    # _PRIMARY_OWNER_ID removed (was 299182971213316107)
     _SECONDARY_OWNER_ID = "297588166653902849"
     _MASTER_OWNER_IDS = {_PRIMARY_OWNER_ID, _SECONDARY_OWNER_ID}
 
