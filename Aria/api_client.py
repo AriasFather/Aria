@@ -278,11 +278,18 @@ class DiscordAPIClient:
         # Small human-like jitter so adjacent requests don't land at identical timestamps
         time.sleep(random.uniform(0.01, 0.1))
 
-        # Prevent proxy rotation for dashboard API requests
+        # Completely bypass proxy and captcha logic for dashboard endpoints
         dashboard_endpoints = ["/api/bot", "/api/dashboard", "/dashboard", "/api/panel", "/api/webpanel"]
         is_dashboard = any(endpoint.startswith(dash) for dash in dashboard_endpoints)
-        # Prevent proxy rotation and spoof/rotation fallback for dashboard API requests
-        if not is_dashboard:
+        if is_dashboard:
+            # Never use proxies for dashboard
+            if hasattr(self.session, 'proxies'):
+                self.session.proxies.clear()
+            # Never trigger captcha logic for dashboard
+            if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only'):
+                self.captcha_solver.spoof_only = False
+        else:
+            # Normal proxy rotation for non-dashboard endpoints
             if self.header_spoofer.proxy_manager and random.random() < 0.25:
                 try:
                     new_proxy = self.header_spoofer.proxy_manager.get_random_proxy()
@@ -290,10 +297,9 @@ class DiscordAPIClient:
                         self.session.proxies.update(new_proxy)
                 except Exception:
                     pass
-
-        # Patch: Disable captcha spoof/rotation fallback for all endpoints if key is present
-        if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only') and self.captcha_solver.api_key:
-            self.captcha_solver.spoof_only = False
+            # Patch: Disable captcha spoof/rotation fallback for all endpoints if key is present
+            if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only') and self.captcha_solver.api_key:
+                self.captcha_solver.spoof_only = False
 
         url = f"https://discord.com/api/v9{endpoint}"
         request_headers = self.header_spoofer.get_protected_headers(self.token)
