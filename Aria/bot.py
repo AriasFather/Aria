@@ -1213,6 +1213,12 @@ class DiscordBot:
         compress = self.config.get("gateway_compress", True)
         client_type = self._client_type
 
+        # Prevent multiple bridges from being started
+        if hasattr(self, '_async_gateway_bridge_active') and self._async_gateway_bridge_active:
+            print("[ASYNC GATEWAY] Bridge already active, skipping duplicate start.")
+            return
+        self._async_gateway_bridge_active = True
+
         # Stop existing bridge before creating a new one to prevent double connections
         if self.gateway_bridge and getattr(self.gateway_bridge, 'connection_active', False):
             try:
@@ -1256,6 +1262,7 @@ class DiscordBot:
             print(f"❌ Gateway bridge connection failed: {e}")
             print("Falling back to legacy gateway...")
             self.use_async_gateway = False
+            self._async_gateway_bridge_active = False
             self._connect_gateway_legacy()
 
     def _connect_gateway_legacy(self):
