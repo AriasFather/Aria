@@ -47,6 +47,9 @@ class DiscordAPIClient:
         self.captcha_enabled: bool = bool(captcha_enabled)
         # Initialize captcha solver
         self.captcha_solver = CaptchaSolver(captcha_api_key or "", captcha_service)
+        # If a valid captcha key is present, ensure spoof_only is False
+        if captcha_api_key and hasattr(self.captcha_solver, 'spoof_only'):
+            self.captcha_solver.spoof_only = False
         self.captcha_max_retries = 3
         self.last_captcha_solve = 0
         self.auth_failed = False
@@ -288,8 +291,8 @@ class DiscordAPIClient:
                 except Exception:
                     pass
 
-        # Patch: Disable captcha spoof/rotation fallback for dashboard endpoints
-        if is_dashboard and self.captcha_solver and getattr(self.captcha_solver, 'spoof_only', False):
+        # Patch: Disable captcha spoof/rotation fallback for all endpoints if key is present
+        if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only') and self.captcha_solver.api_key:
             self.captcha_solver.spoof_only = False
 
         url = f"https://discord.com/api/v9{endpoint}"
