@@ -1335,7 +1335,27 @@ def main():
                     if hasattr(entry, "owner") and str(entry.owner) == str(instance_owner_id):
                         already_active = True
                         break
-            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id) or already_active:
+            # Also check if this process is the main instance and owner matches
+            import getpass
+            import socket
+            import psutil
+            current_uid = str(instance_owner_id)
+            current_pid = os.getpid()
+            # Find all processes running main.py with this owner
+            matches = []
+            for proc in psutil.process_iter(['pid', 'cmdline']):
+                try:
+                    cmdline = proc.info['cmdline']
+                    if not cmdline:
+                        continue
+                    if any("main.py" in part for part in cmdline):
+                        # Try to check for owner in env or args
+                        env_owner = proc.environ().get("HOSTED_OWNER_ID") if hasattr(proc, 'environ') else None
+                        if env_owner and env_owner == current_uid and proc.pid != current_pid:
+                            matches.append(proc.pid)
+                except Exception:
+                    continue
+            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id) or already_active or matches:
                 print(f"[HOSTED] Instance for owner {instance_owner_id} already running. Not starting another gateway.")
                 print("[HOSTED] Gateway loaded (singleton guard active, not connecting bot functions)")
                 import sys
