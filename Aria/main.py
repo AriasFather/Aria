@@ -1318,13 +1318,11 @@ def main():
     
 
 
-    # --- Stronger singleton async gateway/host guard ---
-    # Prevent double hosting/duplicate async gateway startup
+    # --- Singleton async gateway/host guard for HOSTED_MODE only ---
     import host as host_mod
     instance_owner_id = config.get("owner_id") or os.environ.get("HOSTED_OWNER_ID")
-    if hasattr(host_mod, "host_manager") and instance_owner_id:
+    if HOSTED_MODE and hasattr(host_mod, "host_manager") and instance_owner_id:
         with host_mod.host_manager.lock:
-            # Check both active_tokens and processes for this owner
             already_active = False
             for entry in host_mod.host_manager.active_tokens.values():
                 if str(entry.get("owner")) == str(instance_owner_id):
@@ -1335,37 +1333,20 @@ def main():
                     if hasattr(entry, "owner") and str(entry.owner) == str(instance_owner_id):
                         already_active = True
                         break
-            # Also check if this process is the main instance and owner matches
-            import getpass
-            import socket
-            import psutil
-            current_uid = str(instance_owner_id)
-            current_pid = os.getpid()
-            # Find all processes running main.py with this owner
-            matches = []
-            for proc in psutil.process_iter(['pid', 'cmdline']):
-                try:
-                    cmdline = proc.info['cmdline']
-                    if not cmdline:
-                        continue
-                    if any("main.py" in part for part in cmdline):
-                        # Try to check for owner in env or args
-                        env_owner = proc.environ().get("HOSTED_OWNER_ID") if hasattr(proc, 'environ') else None
-                        if env_owner and env_owner == current_uid and proc.pid != current_pid:
-                            matches.append(proc.pid)
-                except Exception:
-                    continue
-            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id) or already_active or matches:
+            if host_mod.host_manager._user_has_active_hosted_locked(instance_owner_id) or already_active:
                 print(f"[HOSTED] Instance for owner {instance_owner_id} already running. Not starting another gateway.")
                 print("[HOSTED] Gateway loaded (singleton guard active, not connecting bot functions)")
                 import sys
                 sys.exit(0)
+
 
     bot = DiscordBot(token, config.get("prefix") or "$", config)
     bot.db = MessageDatabase(os.path.join(os.path.dirname(__file__), "messages.db"))
     bot._auto_delete_enabled = True
     bot._auto_delete_delay = 3.0
     bot.api._default_delete_delay = 3.0
+
+
 
     # Bind the early-started web panel to the live bot/api context.
     # Without this, dashboard endpoints may report disconnected/empty state.
