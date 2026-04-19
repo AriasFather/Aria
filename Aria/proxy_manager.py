@@ -13,9 +13,33 @@ class ProxyManager:
         self.last_fetch = 0
         self.fetch_interval = 3600  # Refresh every hour
         self.local_proxy_file = Path(__file__).with_name("proxies.txt")
+        self.state_file = Path(__file__).with_name("proxy_state.txt")
+        self.current_proxy = None
+        self._load_rotation_state()
 
-        # Only use proxies.txt, never fetch from GitHub
+    def _load_rotation_state(self):
         self.proxies = self._load_local_proxies()
+        if not self.proxies:
+            self.current_proxy = None
+            return
+        if self.state_file.exists():
+            idx = 0
+            try:
+                idx = int(self.state_file.read_text().strip())
+            except Exception:
+                idx = 0
+            if idx < 0 or idx >= len(self.proxies):
+                idx = 0
+            self.current_proxy = self.proxies[idx]
+        else:
+            self.current_proxy = self.proxies[0]
+            self._save_rotation_state(0)
+
+    def _save_rotation_state(self, idx):
+        try:
+            self.state_file.write_text(str(idx))
+        except Exception:
+            pass
 
     def _normalize_proxy(self, proxy):
         entry = str(proxy or "").strip()
@@ -79,14 +103,29 @@ class ProxyManager:
     
     # REMOVED: _fetch_from_github and refresh. Only proxies.txt is used.
     
-    def get_random_proxy(self):
-        """Return a random proxy from the loaded list, or empty dict if none."""
+    def get_random_proxy(self, max_attempts=5):
+        """Return the current working proxy, rotate to next on failure, persist across restarts."""
         if not self.proxies:
             self.proxies = self._load_local_proxies()
         if not self.proxies:
+            self.current_proxy = None
             return {}
-        proxy = random.choice(self.proxies)
-        return {"http": proxy, "https": proxy}
+        idx = self.proxies.index(self.current_proxy) if self.current_proxy in self.proxies else 0
+        attempts = 0
+        while attempts < min(max_attempts, len(self.proxies)):
+            proxy = self.proxies[idx]
+            proxy_dict = {"http": proxy, "https": proxy}
+            if self.test_proxy(proxy_dict):
+                self.current_proxy = proxy
+                self._save_rotation_state(idx)
+                return proxy_dict
+            # Move to next proxy
+            idx = (idx + 1) % len(self.proxies)
+            attempts += 1
+        # If none work, clear state
+        self.current_proxy = None
+        self._save_rotation_state(0)
+        return {}
     
     def test_proxy(self, proxy):
         """Test if a proxy is working."""
