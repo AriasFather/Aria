@@ -120,7 +120,8 @@ class CaptchaSolver:
             print("[DEBUG] CAPTCHA solving is not enabled.")
             return None
 
-        if CAPSOLVER_AVAILABLE and self.service == "capsolver":
+        # 1. Try CapSolver library if available and selected
+        if CAPSOLVER_AVAILABLE and self.service == "capsolver" and self.api_key:
             try:
                 print(f"[DEBUG] Solving hCaptcha with CapSolver library for site_key: {site_key}, url: {url}")
                 task = {
@@ -140,7 +141,8 @@ class CaptchaSolver:
             except Exception as e:
                 print(f"[ERROR] Failed to solve hCaptcha with CapSolver library: {e}")
 
-        if self.solver:
+        # 2. Try generic solver (e.g., TwoCaptcha) if available and key is set
+        if self.solver and self.api_key:
             try:
                 print(f"[DEBUG] Solving hCaptcha for site_key: {site_key}, url: {url}")
                 solver_kwargs = {
@@ -157,11 +159,19 @@ class CaptchaSolver:
             except Exception as e:
                 print(f"[ERROR] Failed to solve hCaptcha with TwoCaptcha library: {e}")
 
-        if self.service == "2captcha":
-            return self._solve_via_2captcha("hcaptcha", site_key, url, invisible, rqdata=rqdata)
-        if self.service == "capsolver":
-            return self._solve_via_capsolver("hcaptcha", site_key, url, invisible, rqdata=rqdata)
+        # 3. Try HTTP fallback for 2captcha/capsolver if key is set
+        if self.api_key:
+            if self.service == "2captcha":
+                token = self._solve_via_2captcha("hcaptcha", site_key, url, invisible, rqdata=rqdata)
+                if token:
+                    return token
+            if self.service == "capsolver":
+                token = self._solve_via_capsolver("hcaptcha", site_key, url, invisible, rqdata=rqdata)
+                if token:
+                    return token
 
+        # 4. Fallback: spoof/rotate if all else fails
+        print("[CAPTCHA] All real captcha solvers failed or not configured. Using spoof/rotation fallback.")
         return None
 
     def solve_recaptcha(self, site_key: str, url: str, version: str = "v2") -> Optional[str]:
