@@ -275,14 +275,17 @@ class DiscordAPIClient:
         # Small human-like jitter so adjacent requests don't land at identical timestamps
         time.sleep(random.uniform(0.01, 0.1))
 
-        # Rotate proxy if available (25% chance)
-        if self.header_spoofer.proxy_manager and random.random() < 0.25:
-            try:
-                new_proxy = self.header_spoofer.proxy_manager.get_random_proxy()
-                if new_proxy:
-                    self.session.proxies.update(new_proxy)
-            except Exception:
-                pass
+        # Prevent proxy rotation for dashboard API requests
+        dashboard_endpoints = ["/api/bot", "/api/dashboard", "/dashboard", "/api/panel", "/api/webpanel"]
+        if not any(endpoint.startswith(dash) for dash in dashboard_endpoints):
+            # Rotate proxy if available (25% chance)
+            if self.header_spoofer.proxy_manager and random.random() < 0.25:
+                try:
+                    new_proxy = self.header_spoofer.proxy_manager.get_random_proxy()
+                    if new_proxy:
+                        self.session.proxies.update(new_proxy)
+                except Exception:
+                    pass
 
         url = f"https://discord.com/api/v9{endpoint}"
         request_headers = self.header_spoofer.get_protected_headers(self.token)

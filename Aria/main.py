@@ -1386,12 +1386,20 @@ def main():
 
     # Register atexit handler to stop background threads cleanly
     import atexit
+    import threading
     def _shutdown_threads():
         try:
             stop_rpc_keepalive(bot, clear_activity=False)
         except Exception:
             pass
-        # Add other thread shutdowns here as needed
+        # Attempt to join all non-main threads to avoid interpreter shutdown errors
+        main_thread = threading.current_thread()
+        for t in threading.enumerate():
+            if t is not main_thread and t.is_alive():
+                try:
+                    t.join(timeout=3)
+                except Exception:
+                    pass
     atexit.register(_shutdown_threads)
 
     # Restore optional persisted runtime settings (client profile / RPC).
