@@ -821,7 +821,7 @@
         <!-- ══════════════════════════════════════════════
              RUNTIME / LOGS
         ══════════════════════════════════════════════ -->
-        <section class="section" id="section-logs" data-admin-only="true">
+        <section class="section" id="section-logs">
             <div class="section-header">
                 <div>
                     <div class="section-title">Runtime Feed</div>
@@ -867,17 +867,17 @@
                 <div class="history-feed" id="commandExecFeed"><div class="log-loading">No logs yet.</div></div>
             </div>
 
-            <div class="table-card table-card-mb-sm">
+            <div class="table-card table-card-mb-sm admin-only">
                 <div class="table-header"><span class="table-title">Sniper Feed</span><span class="table-badge">latest 50</span></div>
                 <div class="history-feed" id="sniperFeed"><div class="log-loading">No sniper logs yet.</div></div>
             </div>
 
-            <div class="table-card table-card-mb-sm">
+            <div class="table-card table-card-mb-sm admin-only">
                 <div class="table-header"><span class="table-title">Gateway &amp; Error Feed</span><span class="table-badge">latest 50</span></div>
                 <div class="history-feed" id="gatewayFeed"><div class="log-loading">No gateway logs yet.</div></div>
             </div>
 
-            <div class="table-card">
+            <div class="table-card admin-only">
                 <div class="table-header"><span class="table-title">Raw Runtime Tail</span><span class="table-badge">debug</span></div>
                 <div class="log-container" id="logContainer"><div class="log-loading">Fetching…</div></div>
             </div>

@@ -948,16 +948,17 @@ async function loadBoost() {
 
     // Server boost table
     const serverBoosts  = data.server_boosts || {};
-    const serverEntries = Object.entries(serverBoosts);
+    // Only show servers with boosts for non-admin users
+    let boostedEntries = Object.entries(serverBoosts).filter(([, v]) => Number(v) > 0);
     const countEl = document.getElementById('boostServerCount');
-    if (countEl) countEl.textContent = serverEntries.length + ' servers';
+    if (countEl) countEl.textContent = boostedEntries.length + ' servers';
     const tbody = document.getElementById('boostServerBody');
     if (tbody) {
-        if (!serverEntries.length) {
-            tbody.innerHTML = '<tr><td colspan="3" class="empty-row">No server boost data</td></tr>';
+        if (!boostedEntries.length) {
+            tbody.innerHTML = '<tr><td colspan="3" class="empty-row">No boosts applied. Connect a Nitro account and assign boosts.</td></tr>';
         } else {
-            const max = Math.max(1, ...serverEntries.map(([, v]) => Number(v) || 0));
-            tbody.innerHTML = serverEntries.map(([id, count]) => {
+            const max = Math.max(1, ...boostedEntries.map(([, v]) => Number(v) || 0));
+            tbody.innerHTML = boostedEntries.map(([id, count]) => {
                 const n = Number(count) || 0;
                 return `<tr>
                     <td class="cmd-aliases mono">${esc(id)}</td>
@@ -2073,20 +2074,25 @@ async function loadHosted() {
         return;
     }
 
-    tbody.innerHTML = res.hosted.map(u =>
-        `<tr>
+    tbody.innerHTML = res.hosted.map(u => {
+        let statusBadge = `<span class="badge ${u.active ? 'badge-ok' : 'badge-off'}">${u.active ? '● Active' : '○ Inactive'}</span>`;
+        let warn = '';
+        if (!u.active) {
+            warn = '<div style="color:#e74c3c;font-size:12px;margin-top:2px">Not connected — commands will not work</div>';
+        }
+        return `<tr>
             <td class="cmd-name" style="font-size:11px">${esc(u.token_id || '—')}</td>
             <td>${esc(u.username || '—')}</td>
             <td class="cmd-aliases">${esc(u.user_id || '—')}</td>
             <td class="cmd-aliases">${esc(u.prefix || '—')}</td>
             <td class="cmd-aliases">${esc(u.client_type || 'unknown')}</td>
-            <td><span class="badge ${u.active ? 'badge-ok' : 'badge-off'}">${u.active ? '● Active' : '○ Inactive'}</span></td>
+            <td>${statusBadge}${warn}</td>
             <td class="cmd-aliases">${esc(fmtTs(u.connected_at) || '—')}</td>
             <td>
                 <button class="btn btn-danger-soft" style="padding:4px 10px;font-size:11px" onclick="disconnectHostedInstance('${encodeURIComponent(u.token_ref || '')}')">Remove</button>
             </td>
-        </tr>`
-    ).join('');
+        </tr>`;
+    }).join('');
 }
 
 async function connectHostedToken() {

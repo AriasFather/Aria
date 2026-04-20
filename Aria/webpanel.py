@@ -119,6 +119,9 @@ class WebPanel:
         _secret_seed = f"aria-{instance_id}-{self.owner_id}"
         self.app.secret_key = os.getenv("ARIA_WEBPANEL_SECRET", hashlib.sha256(_secret_seed.encode()).hexdigest())
 
+        # --- Normalize owner entry in dashboard_users.json on startup ---
+        self._normalize_owner_entry()
+
         self._ensure_admin_account()
         self._setup_routes()
 
@@ -128,6 +131,22 @@ class WebPanel:
         self._notif_lock = threading.Lock()
         self._notif_seen_ids: set = set()  # deduplicate by message/event ID
 
+    def _normalize_owner_entry(self):
+        """Ensure the owner entry always has role 'admin' and instance_id 'main'."""
+        users = self._load_dashboard_users()
+        owner_id = str(self.owner_id)
+        entry = users.get(owner_id)
+        changed = False
+        if isinstance(entry, dict):
+            if str(entry.get("role", "")).lower() != "admin":
+                entry["role"] = "admin"
+                changed = True
+            if str(entry.get("instance_id", "")) != "main":
+                entry["instance_id"] = "main"
+                changed = True
+            if changed:
+                users[owner_id] = entry
+                self._save_dashboard_users(users)
     def start(self):
         """Start the web panel server."""
         try:
