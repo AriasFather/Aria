@@ -10,7 +10,6 @@ VoiceClient.on_voice_server_update().
 
 import json
 import asyncio
-import websockets
 import socket
 import struct
 import time
@@ -19,6 +18,11 @@ import random
 import logging
 from typing import Optional, Dict
 from discord_api_types import GatewayOpcodes, VoiceOpcodes
+
+try:
+    import websockets
+except ImportError:
+    websockets = None
 
 _VOICE_WS_VERSION = 4
 logger = logging.getLogger(__name__)
@@ -96,6 +100,11 @@ class VoiceClient:
     # ── connect / disconnect ─────────────────────────────────────────────
 
     def connect(self, channel_id: str, guild_id, is_dm: bool = False) -> bool:
+        if websockets is None:
+            self._ws_error = "Voice support requires the optional 'websockets' dependency"
+            logger.warning("[Voice] %s", self._ws_error)
+            return False
+
         self.channel_id = str(channel_id)
         self.guild_id = str(guild_id) if guild_id else None
         self.is_dm_call = is_dm

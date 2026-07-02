@@ -20,7 +20,7 @@ def setup_boost_commands(bot, api_client, delete_after_delay_func):
                 (f"{p}boost status", "Check boost status"),
                 (f"{p}boost list", "List boosted servers"),
             ]
-            help_text = fmt.header("Boost Commands") + "\n" + fmt.command_list(cmds)
+            help_text = fmt.sections("Boost Commands", fmt.command_list(cmds))
             msg = ctx["api"].send_message(ctx["channel_id"], help_text)
             if msg:
                 delete_after_delay_func(ctx["api"], ctx["channel_id"], msg.get("id"))
@@ -47,7 +47,7 @@ def setup_boost_commands(bot, api_client, delete_after_delay_func):
                     cmds.append((f"Boost {i}", "Expired"))
 
             # Build ANSI directly so the global formatter doesn't re-process it
-            status_msg = fmt.header("Boost Status") + "\n" + fmt.command_list(cmds)
+            status_msg = fmt.sections("Boost Status", fmt.command_list(cmds))
             msg = ctx["api"].send_message(ctx["channel_id"], status_msg)
         
         elif args[0] == "transfer" and len(args) >= 2:
@@ -55,7 +55,7 @@ def setup_boost_commands(bot, api_client, delete_after_delay_func):
             import formatter as fmt
             status_msg = ctx["api"].send_message(
                 ctx["channel_id"],
-                fmt.header("Boost Transfer") + "\n" + fmt._block(
+                fmt.sections("Boost Transfer",
                     f"{fmt.DARK}Finding available slots for {fmt.RESET}{fmt.WHITE}{to_id}{fmt.RESET}{fmt.DARK}...{fmt.RESET}"
                 )
             )
@@ -64,7 +64,7 @@ def setup_boost_commands(bot, api_client, delete_after_delay_func):
                 if status_msg:
                     ctx["api"].edit_message(
                         ctx["channel_id"], status_msg.get("id"),
-                        fmt.header("Boost Transfer") + "\n" + fmt._block(
+                        fmt.sections("Boost Transfer",
                             f"{fmt.RED}No available boost slots (all on cooldown or already boosting target){fmt.RESET}"
                         )
                     )
@@ -125,12 +125,12 @@ def setup_boost_commands(bot, api_client, delete_after_delay_func):
                 body = "\n".join(lines)
                 msg = ctx["api"].send_message(
                     ctx["channel_id"],
-                    fmt.header("Boosted Servers") + "\n" + fmt._block(body),
+                    fmt.sections("Boosted Servers", body),
                 )
             else:
                 msg = ctx["api"].send_message(
                     ctx["channel_id"],
-                    fmt.header("Boost") + "\n" + fmt._block(f"{fmt.DARK}No boosted servers{fmt.RESET}"),
+                    fmt.sections("Boost", f"{fmt.DARK}No boosted servers{fmt.RESET}"),
                 )
         
         else:

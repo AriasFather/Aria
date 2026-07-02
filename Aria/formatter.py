@@ -175,6 +175,15 @@ def sections(header_text: str, body_text: str, footer_text: str = "") -> str:
         parts.append(_block(str(footer_text)))
     return "\n".join(parts)
 
+def panel(header_text: str, body_text: str = "", footer_text: str = "") -> str:
+    """Return a single ANSI block with header, body, and optional footer."""
+    parts = [_raw_header(header_text)]
+    if str(body_text or "").strip():
+        parts.extend(["", str(body_text)])
+    if str(footer_text or "").strip():
+        parts.extend(["", str(footer_text)])
+    return _block("\n".join(parts))
+
 def paginate(content: list, page: int, per_page: int = 10):
     """Paginate list content, returning (items_for_page, total_pages)."""
     total_pages = (len(content) + per_page - 1) // per_page if content else 1

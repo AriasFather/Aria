@@ -14,7 +14,7 @@ class QuestSystem:
         self.auto_complete = False
         self._task_thread = None
         self.last_fetch = 0
-        self.refresh_interval = 30 * 60  # 30 minutes
+        self.refresh_interval = 5 * 60  # 5 minutes for quicker real-time pickup
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -460,6 +460,9 @@ class QuestSystem:
         if self.auto_complete:
             return False, "Already running"
         self.auto_complete = True
+        # Fresh fetch so enroll loop has quests to work with immediately
+        if not self.quests:
+            self.fetch_quests()
         self._task_thread = threading.Thread(target=self._run_auto_complete, daemon=True)
         self._task_thread.start()
         return True, "Started"

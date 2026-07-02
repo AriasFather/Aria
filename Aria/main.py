@@ -75,8 +75,6 @@ import os
 
 # Add the `/workspaces/Aria/Aria` directory to the Python module search path
 sys.path.append(os.path.dirname(__file__))
-
-from webpanel import WebPanel
 try:
     from message_db import MessageDatabase
 except ImportError:
@@ -303,9 +301,14 @@ def upload_n_get_asset_key(bot, image_url, application_id=None):
 
     # Upload external URLs to a persistent self-DM attachment only as fallback.
     asset = upload_image_to_discord(bot.api, image_url, application_id=application_id)
-    if not asset:
-        _notify_rpc_issue(bot, f"> **✗ RPC Image** :: Failed to upload or use image: {image_url}")
-    return asset
+    if asset:
+        return asset
+    # Last resort: pass the raw URL directly — newer Discord clients render it
+    if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
+        _notify_rpc_issue(bot, f"> **RPC Image** :: using direct URL (may not render on all clients)")
+        return image_url
+    _notify_rpc_issue(bot, f"> **RPC Image** :: failed to resolve image: {image_url}")
+    return None
 
 def send_spotify_with_spoofing(bot, song_name, artist, album, duration_minutes=3.5, current_position_minutes: float = 0.0, image_url=None):
     current_ms = int(current_position_minutes * 60 * 1000)
@@ -615,6 +618,11 @@ REAL_RPC_ALIASES = {
     "amazon_prime": "primevideo",
     "chrome": "browser",
     "web": "browser",
+    "metaquest": "metaquest",
+    "quest": "metaquest",
+    "quest3": "metaquest",
+    "oculus": "metaquest",
+    "vr": "metaquest",
 }
 
 
@@ -813,6 +821,38 @@ def send_playing_activity(bot, name, button_label=None, button_url=None, image_u
         if "metadata" not in activity:
             activity["metadata"] = {}
         activity["metadata"]["button_urls"] = [button_url]
+
+    bot.set_activity(activity)
+
+def send_metaquest_activity(bot, game_name=None, details=None, state=None, image_url=None):
+    """Send a 'Playing in Meta Quest 3' RPC activity."""
+    _MQ_APP_ID = "1418873561485504553"  # Meta Quest companion app
+    activity = {
+        "type": 0,  # Playing
+        "name": game_name or "Meta Quest",
+        "application_id": _MQ_APP_ID,
+    }
+    if details:
+        activity["details"] = details
+    if state:
+        activity["state"] = state
+    else:
+        activity["state"] = "Playing in VR"
+
+    asset_key = None
+    if image_url:
+        try:
+            asset_key = upload_n_get_asset_key(bot, image_url, application_id=_MQ_APP_ID)
+        except Exception:
+            pass
+
+    activity["assets"] = {
+        "large_image": asset_key if asset_key else "https://upload.wikimedia.org/wikipedia/commons/a/a9/Meta-Logo.png",
+        "large_text": "Meta Quest 3",
+        "small_image": asset_key if asset_key else None,
+    }
+    if not activity["assets"]["small_image"]:
+        del activity["assets"]["small_image"]
 
     bot.set_activity(activity)
 
@@ -1860,11 +1900,14 @@ def main():
     boost_manager.load_state()
     bot.boost_manager = boost_manager  # Attach to bot for event handling
     
-    # Fetch current server boost counts
-    try:
-        boost_manager.fetch_server_boosts()
-    except Exception as e:
-        print(f"Error fetching server boosts: {e}")
+    # Fetch current server boost counts in background — 54 sequential API calls
+    # would otherwise block the gateway connection from starting
+    def _bg_boost_scan():
+        try:
+            boost_manager.fetch_server_boosts()
+        except Exception as e:
+            print(f"Error fetching server boosts: {e}")
+    threading.Thread(target=_bg_boost_scan, daemon=True, name="BoostScan").start()
     
     try:
         from boost_commands import setup_boost_commands
@@ -2060,17 +2103,17 @@ def main():
         if args[0] == "on":
             ctx["bot"].nitro_sniper.toggle(True)
             print(f"[NITRO] enabled by user={ctx['author_id']}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ Nitro** :: Enabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> **Nitro sniper** **enabled.**")
         
         elif args[0] == "off":
             ctx["bot"].nitro_sniper.toggle(False)
             print(f"[NITRO] disabled by user={ctx['author_id']}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Nitro** :: Disabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> **Nitro sniper** **disabled.**")
         
         elif args[0] == "clear":
             count = ctx["bot"].nitro_sniper.clear_codes()
             print(f"[NITRO] cleared cached codes by user={ctx['author_id']}")
-            msg = ctx["api"].send_message(ctx["channel_id"], f"> **✓ Nitro** :: Cleared **{count}** codes.")
+            msg = ctx["api"].send_message(ctx["channel_id"], f"> Nitro cache **cleared** ({count} codes).")
         
         elif args[0] == "stats":
             stats = ctx["bot"].nitro_sniper.get_stats()
@@ -2122,11 +2165,11 @@ def main():
         if sub == "on":
             gs.toggle(True)
             print(f"[GIVEAWAY] enabled by user={ctx['author_id']}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ Giveaway** :: Enabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> **Giveaway sniper** **enabled.**")
         elif sub == "off":
             gs.toggle(False)
             print(f"[GIVEAWAY] disabled by user={ctx['author_id']}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Giveaway** :: Disabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> **Giveaway sniper** **disabled.**")
         else:
             s = gs.get_stats()
             status = "ON" if s["enabled"] else "OFF"
@@ -2170,21 +2213,21 @@ def main():
         if args[0] == "on":
             agct.enabled = True
             print(f"[AGCT] Enabled: {agct.enabled}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ Anti-GC Trap** :: Enabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> Anti-GC trap **enabled.**")
         
         elif args[0] == "off":
             agct.enabled = False
             print(f"[AGCT] Enabled: {agct.enabled}")
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Anti-GC Trap** :: Disabled.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> Anti-GC trap **disabled.**")
         
         elif args[0] == "block":
             if len(args) >= 2:
                 if args[1] == "on":
                     agct.block_creators = True
-                    msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ Anti-GC Trap** :: Block creators enabled.")
+                    msg = ctx["api"].send_message(ctx["channel_id"], "> Anti-GC trap block creators **enabled.**")
                 elif args[1] == "off":
                     agct.block_creators = False
-                    msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Anti-GC Trap** :: Block creators disabled.")
+                    msg = ctx["api"].send_message(ctx["channel_id"], "> Anti-GC trap block creators **disabled.**")
         
         elif args[0] == "msg" and len(args) >= 2:
             message = " ".join(args[1:])
@@ -2273,24 +2316,6 @@ def main():
             afk_system.save_state()
         else:
             msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ AFK** :: Failed to set AFK.")
-        
-    @bot.command(name="afkwebhook")
-    def afk_webhook_cmd(ctx, args):
-        if not args:
-            current = afk_system.webhook_url or "None"
-            display = current if len(current) < 50 else current[:47] + "..."
-            msg = ctx["api"].send_message(ctx["channel_id"], f"> **AFK Webhook** :: Current: `{display}` · `{bot.prefix}afkwebhook <url>` to set")
-            return
-        
-        webhook_url = args[0]
-        
-        success = afk_system.set_webhook(webhook_url)
-        afk_system.save_state()
-        
-        if success:
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ AFK Webhook** :: Webhook set.")
-        else:
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ AFK Webhook** :: Failed to set webhook.")
         
     @bot.command(name="afkstatus")
     def afk_status_cmd(ctx, args):
@@ -2386,14 +2411,6 @@ def main():
 
         def _purge_worker():
             status = None
-            if not silent:
-                amount_text = "all" if target_amount is None else str(target_amount)
-                scope = "everyone" if everyone else "your messages"
-                order = "oldest→newest" if reverse else "newest→oldest"
-                status = ctx["api"].send_message(
-                    ctx["channel_id"],
-                    f"> **Purge** :: Purging **{amount_text}** {scope} ({order})...",
-                )
 
             mine_id = str(bot.user_id)
             matched = []
@@ -2468,18 +2485,15 @@ def main():
             if not silent:
                 state = "stopped" if len(matched) and deleted < len(matched) else "complete"
                 if failed:
-                    result = f"> **{'✗ Purge' if state == 'stopped' else '✓ Purge'}** :: Purged **{deleted}** message{'s' if deleted != 1 else ''}. ({failed} failed)"
+                    result = f"> **Purged** {deleted} message{'s' if deleted != 1 else ''}. ({failed} failed)"
                 else:
-                    result = f"> **✓ Purge** :: Purged **{deleted}** message{'s' if deleted != 1 else ''}."
+                    result = f"> **Purged** {deleted} message{'s' if deleted != 1 else ''}."
                 if deleted == 0:
-                    result = f"> **Purge** :: No messages found to delete."
-                if status and status.get("id"):
-                    try:
-                        ctx["api"].edit_message(ctx["channel_id"], status.get("id"), result)
-                    except Exception:
-                        ctx["api"].send_message(ctx["channel_id"], result)
-                else:
-                    ctx["api"].send_message(ctx["channel_id"], result)
+                    result = "> **Purge** nothing to delete."
+                result_msg = ctx["api"].send_message(ctx["channel_id"], result)
+                if result_msg and result_msg.get("id"):
+                    _delay = getattr(bot, "_auto_delete_delay", 3.0)
+                    delete_after_delay(ctx["api"], ctx["channel_id"], result_msg["id"], _delay)
 
         threading.Thread(target=_purge_worker, daemon=True, name="purge-worker").start()
 
@@ -3058,7 +3072,7 @@ def main():
             for uid in list(super_react_client.get_ssr_targets().keys()):  # type: ignore[union-attr]
                 super_react_client.remove_ssr_target(uid)  # type: ignore[union-attr]
             super_react_client.stop()
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ SuperReact** :: Stopped.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> SuperReact **stopped.**")
         else:
             msg = ctx["api"].send_message(ctx["channel_id"], "> **SuperReact** :: Not running.")
 
@@ -3129,7 +3143,7 @@ def main():
                 msg = ctx["api"].send_message(ctx["channel_id"], f"> **✗ AutoReact** :: Removed target <@{target_id}>.")
                 return
             bot._autoreact_targets.clear()
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ AutoReact** :: Cleared all targets.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> AutoReact targets **cleared.**")
             return
 
         target_id = _parse_target(args[0])
@@ -4415,6 +4429,22 @@ Example Usage:
             except Exception as e:
                 msg_text = f"> **✗ Playing RPC** :: Error: {str(e)}"
 
+        elif parts == "metaquest":
+            try:
+                game = kv.get("name") or kv.get("game") or name or "Meta Quest 3"
+                det = kv.get("details") or details or "In VR"
+                st = kv.get("state") or state or "Playing in VR"
+                img = raw_image_url or image_url
+                send_metaquest_activity(bot, game, det, st, img)
+
+                def _refresh_mq(_g=game, _d=det, _s=st, _i=img):
+                    send_metaquest_activity(bot, _g, _d, _s, _i)
+
+                configure_rpc_keepalive(bot, "metaquest", _refresh_mq)
+                msg_text = f"> **Meta Quest RPC** :: **{game}** · {det} · {st}" + (f" · image set" if img else "")
+            except Exception as e:
+                msg_text = f"> **✗ Meta Quest RPC** :: Error: {str(e)}"
+
         elif parts == "timer":
             try:
                 if name and start_time and end_time:
@@ -4474,7 +4504,7 @@ Example Usage:
     def rpcclear_cmd(ctx, args):
         stop_rpc_keepalive(bot=ctx["bot"], clear_activity=True)
         _clear_rpc_state()
-        msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ RPCClear** :: Cleared active and saved RPC state")
+        msg = ctx["api"].send_message(ctx["channel_id"], "> RPC state **cleared.**")
     @bot.command(name="setserverpfp", aliases=["serverspfp", "guildpfp", "setguildpfp", "sserverpfp"])
     def setserverpfp(ctx, args):
         if not is_control_user(ctx["author_id"]):
@@ -5314,7 +5344,7 @@ Example Usage:
         bot._mimic_target = None
         bot._mimic_custom_response = None
         bot._mimic_sent_messages.clear()
-        msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Mimic** :: Stopped.")
+        msg = ctx["api"].send_message(ctx["channel_id"], "> Mimic **stopped.**")
 
     # ─── UTILITY / TEXT TRANSFORM COMMANDS ─────────────────────────────────
 
@@ -5750,7 +5780,7 @@ Example Usage:
             if custom_text:
                 msg = ctx["api"].send_message(ctx["channel_id"], f"> **✓ Custom Status** :: Set to **{custom_text}**")
             else:
-                msg = ctx["api"].send_message(ctx["channel_id"], "> **✓ Custom Status** :: Cleared")
+                msg = ctx["api"].send_message(ctx["channel_id"], "> Custom status **cleared.**")
         except Exception as e:
             msg = ctx["api"].send_message(ctx["channel_id"], f"> **✗ Custom Status** :: {e}")
 
@@ -5978,29 +6008,37 @@ Example Usage:
 
     @bot.command(name="snipe", aliases=["sn"])
     def snipe_cmd_runtime(ctx, args):
+        import formatter as fmt
         cid = ctx["channel_id"]
         entry = bot._snipe_cache.get(cid)
         if not entry:
-            msg = ctx["api"].send_message(cid, "> **Snipe** :: Nothing to snipe in this channel")
+            msg = ctx["api"].send_message(cid, "> **Snipe** **nothing sniped in this channel.**")
             return
         m = entry.get("message") or {}
         author = (m.get("author") or {}).get("username", "Unknown")
-        content = m.get("content") or "[no content]"
-        msg = ctx["api"].send_message(cid, f"> **Snipe** :: **{author}**: {content[:1800]}")
+        content = (m.get("content") or "[no content]").replace("```", "'''")
+        body = f"{fmt.CYAN}author  {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{author}{fmt.RESET}\n{fmt.CYAN}content {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{content[:400]}{fmt.RESET}"
+        msg = ctx["api"].send_message(cid, fmt._block(body))
 
     @bot.command(name="editsnipe", aliases=["esnipe", "es"])
     def editsnipe_cmd(ctx, args):
+        import formatter as fmt
         cid = ctx["channel_id"]
         entry = bot._esnipe_cache.get(cid)
         if not entry:
-            msg = ctx["api"].send_message(cid, "> **EditSnipe** :: Nothing to edit-snipe in this channel")
+            msg = ctx["api"].send_message(cid, "> **EditSnipe** **nothing to edit-snipe in this channel.**")
             return
         before_data = entry.get("before") or {}
         after_data = entry.get("after") or {}
         author = (before_data.get("author") or {}).get("username", "Unknown")
-        before = before_data.get("content") or "[empty]"
-        after = after_data.get("content") or "[empty]"
-        msg = ctx["api"].send_message(cid, f"> **EditSnipe** :: **{author}** edited:\n> Before: {before[:800]}\n> After: {after[:800]}")
+        before = (before_data.get("content") or "[empty]").replace("```", "'''")
+        after = (after_data.get("content") or "[empty]").replace("```", "'''")
+        body = (
+            f"{fmt.CYAN}author {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{author}{fmt.RESET}\n"
+            f"{fmt.CYAN}before {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{before[:300]}{fmt.RESET}\n"
+            f"{fmt.CYAN}after  {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{after[:300]}{fmt.RESET}"
+        )
+        msg = ctx["api"].send_message(cid, fmt._block(body))
 
     # ─── REMINDER COMMAND ────────────────────────────────────────────────────
 
@@ -6768,7 +6806,7 @@ Example Usage:
         elif subcommand == "stop":
             if guild_id in AUTOBUMP_CONFIG:
                 AUTOBUMP_CONFIG.pop(guild_id)
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Autobump** :: Stopped.")
+            msg = ctx["api"].send_message(ctx["channel_id"], "> Autobump **stopped.**")
 
     @bot.command(name="help", aliases=["h", "commands"])
     def show_help(ctx, args):
@@ -6862,7 +6900,7 @@ Example Usage:
                 if isinstance(line, tuple) and len(line) == 2:
                     left = _clean_page_text(line[0])
                     right = _clean_page_text(line[1])
-                    out.append(f"{fmt.PINK}{left:<24}{fmt.DARK}:: {fmt.RESET}{fmt.GREEN}{right}{fmt.RESET}")
+                    out.append(f"{fmt.PINK}{left}{fmt.DARK} :: {fmt.RESET}{fmt.GREEN}{right}{fmt.RESET}")
                 elif isinstance(line, dict) and line.get("type") == "section":
                     continue
                 elif line == "":
@@ -8223,7 +8261,6 @@ Example Usage:
                 "lines": [
                     ("afk [reason]", "Set AFK status"),
                     ("afkstatus [user_id]", "Check AFK status"),
-                    ("afkwebhook <url>", "Set notification webhook"),
                 ],
             },
 
@@ -8233,14 +8270,6 @@ Example Usage:
                                 "",
                                 {"type": "section", "text": "Arguments"},
                                 ("user_id", "Discord user ID to check (optional, defaults to you)"),
-                        ),
-
-                        "afkwebhook": help_page(
-                                f"{p}afkwebhook <url>",
-                                "Sets a webhook URL to receive notifications when someone mentions you while AFK.",
-                                "",
-                                {"type": "section", "text": "Arguments"},
-                                ("url", "Discord webhook URL to send notifications to"),
                         ),
 
             # ── Nitro ────────────────────────────────────────────────────────
@@ -8651,7 +8680,7 @@ Example Usage:
                 ("Owner", "Admin / owner only"),
             ]
             category_lines = [
-                f"{fmt.PURPLE}{name:<16}{fmt.DARK}:: {fmt.RESET}{fmt.WHITE}{desc}{fmt.RESET}"
+                f"{fmt.PURPLE}{name}{fmt.DARK} :: {fmt.RESET}{fmt.WHITE}{desc}{fmt.RESET}"
                 for name, desc in categories
             ]
             body_text = "\n".join(category_lines)
@@ -8689,7 +8718,7 @@ Example Usage:
                 return
             content = help_pages[page]
             lines = content.get("lines", [])
-            lines_per_page = 5  # Keep help messages short to avoid long send payloads
+            lines_per_page = 10  # Items per help page
             pages = []
             for index in range(0, len(lines), lines_per_page):
                 page_slice = lines[index:index + lines_per_page]
@@ -8747,7 +8776,7 @@ Example Usage:
                 )
             else:
                 bad = (lookup or "unknown").strip()
-                msg = ctx["api"].send_message(ctx["channel_id"], f"> **No command or category found**: **{bad}**")
+                msg = ctx["api"].send_message(ctx["channel_id"], f"> Unknown command or category: **{bad}**")
 
     # Ensure short aliases point to the real help handler, not an early fallback registration.
     _main_help_cmd = bot.commands.get("help")
@@ -10419,7 +10448,6 @@ Example Usage:
             and afk_system.is_afk(bot.user_id)
             and not is_setting_afk
             and not is_afk_confirmation
-            and not matched_prefix
         ):
             away_time = afk_system.get_time_message(bot.user_id)
             afk_system.remove_afk(bot.user_id)
@@ -12091,7 +12119,12 @@ Example Usage:
 
         msg = ctx["api"].send_message(
             ctx["channel_id"],
-            f"> **Edit Snipe** :: **{author}** ({uid}) at {edited_str}\n> Before: {before_c}\n> After:  {after_c}",
+            fmt._block(
+                f"{fmt.CYAN}author {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{author} ({uid}){fmt.RESET}\n"
+                f"{fmt.CYAN}edited {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{edited_str}{fmt.RESET}\n"
+                f"{fmt.CYAN}before {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{before_c}{fmt.RESET}\n"
+                f"{fmt.CYAN}after  {fmt.DARK}::{fmt.RESET} {fmt.WHITE}{after_c}{fmt.RESET}"
+            ),
         )
     # -----------------------------------------------------------------------
     # inviteinfo — inspect an invite without joining

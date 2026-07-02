@@ -83,7 +83,7 @@ def _parse_status_details(lines: List[str]) -> Tuple[dict, List[str]]:
 def _render_section(title: Optional[str], lines: List[str]) -> str:
     cleaned = [line for line in lines if line.strip()]
     if not cleaned and title:
-        return fmt.header(title)
+        return fmt._block(fmt._raw_header(title))
 
     commands = _parse_command_lines(cleaned)
     details, extras = _parse_status_details(cleaned)
@@ -92,11 +92,12 @@ def _render_section(title: Optional[str], lines: List[str]) -> str:
     leftover_lines = [line for line in cleaned if " :: " not in line]
 
     if commands and command_line_count >= max(1, len(cleaned) - len(extras)):
-        # header bar + command list bar — separate blocks, one message
         parts = []
+        command_body = fmt.command_list(commands)
         if title:
-            parts.append(fmt.header(title))
-        parts.append(fmt.command_list(commands))
+            parts.append(fmt.sections(title, command_body))
+        else:
+            parts.append(fmt._block(command_body))
         if leftover_lines:
             extra = "\n".join(line.lstrip("> ").strip() for line in leftover_lines if line.strip())
             if extra:
@@ -105,16 +106,21 @@ def _render_section(title: Optional[str], lines: List[str]) -> str:
 
     # Fallback
     parts = []
-    if title:
-        parts.append(fmt.header(title))
     if commands:
-        parts.append(fmt.command_list(commands))
+        command_body = fmt.command_list(commands)
+        if title:
+            parts.append(fmt.sections(title, command_body))
+            title = None
+        else:
+            parts.append(fmt._block(command_body))
     if details:
         parts.append(fmt.status_box(title or "Details", details))
     non_command_lines = [line for line in cleaned if " :: " not in line and not line.strip().startswith(">")]
     merged_extras = extras + [line.strip() for line in non_command_lines if line.strip()]
     if merged_extras:
         parts.append(fmt.info_block(title or "Aria", "\n".join(merged_extras)))
+    elif title and cleaned:
+        parts.append(fmt.sections(title, "\n".join(cleaned)))
     if not parts:
         parts.append(fmt.info_block(title or "Aria", "\n".join(cleaned)))
     return "\n".join(parts)
@@ -161,6 +167,28 @@ def _merge_ansi_blocks(text: str) -> str:
     return "> ```ansi\n" + merged + "\n> ```"
 
 
+import re as _re
+_SYMBOL_RE = _re.compile(r'(?<=\*\*)[✓✗⚠ℹ•·]\s*')
+# Matches: > **Feature Name** :: description text
+# Captures feature name and description so we can reassemble cleanly
+_STATUS_RE = _re.compile(r'^(> )\*\*([^*]+)\*\*\s*::\s*(.*)$', _re.DOTALL)
+
+
+def _clean_status_line(text: str) -> str:
+    """Convert '> **Feature** :: description' to '> Feature description'."""
+    # First strip symbols like ✓✗ from inside **...**
+    text = _SYMBOL_RE.sub('', text)
+    m = _STATUS_RE.match(text.rstrip())
+    if m:
+        prefix, feature, desc = m.group(1), m.group(2).strip(), m.group(3).strip()
+        # lowercase first char of desc, bold both feature and description
+        if desc:
+            desc = desc[0].lower() + desc[1:]
+            return f"{prefix}**{feature}** **{desc}**"
+        return f"{prefix}**{feature}**"
+    return text
+
+
 def _format_outgoing(content: Optional[str]) -> Optional[str]:
     """Apply formatter style to outgoing command content."""
     if content is None:
@@ -171,6 +199,12 @@ def _format_outgoing(content: Optional[str]) -> Optional[str]:
 
     if stripped.startswith("```ansi") or stripped.startswith("> ```ansi"):
         return text  # already ANSI formatted
+
+    # Plain Discord markdown messages — clean status lines, pass everything else through
+    if stripped.startswith("> ") or stripped.startswith("**"):
+        # Multi-line messages: clean each line individually
+        lines = text.split('\n')
+        return '\n'.join(_clean_status_line(l) if l.strip().startswith('> **') else l for l in lines)
 
     # Preserve manual ANSI strings by wrapping once instead of reformatting structure.
     if "\u001b[" in text:
@@ -186,7 +220,7 @@ def _format_outgoing(content: Optional[str]) -> Optional[str]:
     if structured:
         return structured
 
-    return fmt.info_block("Aria", body)
+    return text
 
 
 def install_global_formatter() -> None:

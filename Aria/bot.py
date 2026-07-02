@@ -1065,13 +1065,28 @@ class DiscordBot:
             print(f"\033[1;31m[IDENTIFY ERROR]\033[0m {e}")
 
     def set_client_type(self, client_type: str) -> bool:
-        """Change the reported client type, update API headers, manage VRRPC, and reconnect gateway."""
-        from vr_rpc import VRRPC
+        """Change the reported client type, update API headers, and reconnect the gateway.
+
+        VRRPC is intentionally not started here — it opens a second Discord gateway
+        session with the same token which causes duplicate-session crashes and
+        repeated reconnect loops.  The client-type change (which updates the $os/$browser
+        IDENTIFY properties) is enough to make Discord report the correct platform.
+        """
         client_type = normalize_client_type(client_type)
         if client_type not in self._CLIENT_PROFILES:
             return False
         self._client_type = client_type
         self._client_type_forced = True
+
+        # Stop any existing VRRPC to prevent a duplicate session hanging around
+        if hasattr(self, "_vrrpc") and self._vrrpc is not None:
+            try:
+                self._vrrpc._desired_running = False
+                self._vrrpc._stop_requested = True
+                self._vrrpc._close_client()
+            except Exception:
+                pass
+            self._vrrpc = None
 
         # Update HeaderSpoofer profile so HTTP API requests match the new client
         spoofer = getattr(self.api, "header_spoofer", None)
@@ -1087,37 +1102,7 @@ class DiscordBot:
                     # Reset fingerprint cache so next request fetches a fresh one
                     coordinator.cache_time = 0
 
-        # VRRPC management
-        if not hasattr(self, "_vrrpc"):
-            self._vrrpc = None
-        if client_type == "vr" and not getattr(self.config, 'disable_vrrpc', False):
-            if self._vrrpc is None:
-                try:
-                    self._vrrpc = VRRPC(self.config)
-                    self._vrrpc._desired_running = True
-                    self._vrrpc.start()
-                except Exception as e:
-                    print(f"[VRRPC] Failed to start VRRPC: {e}")
-                    self._vrrpc = None
-            else:
-                self._vrrpc._desired_running = True
-                if not self._vrrpc.running:
-                    try:
-                        self._vrrpc.start()
-                    except Exception as e:
-                        print(f"[VRRPC] Failed to restart VRRPC: {e}")
-        else:
-            # Stop VRRPC if running and not vr client type
-            if hasattr(self, "_vrrpc") and self._vrrpc is not None:
-                try:
-                    self._vrrpc._desired_running = False
-                    self._vrrpc._stop_requested = True
-                    self._vrrpc._close_client()
-                except Exception as e:
-                    print(f"[VRRPC] Failed to stop VRRPC: {e}")
-                self._vrrpc = None
-
-        # Close current WS — on_close fires and _auto_reconnect takes over
+        # Close current WS — on_close fires and _auto_reconnect takes over with new client type
         try:
             if self.ws:
                 self.ws.close()
