@@ -13,12 +13,16 @@
 
     <!-- NAV -->
     <nav class="top-nav">
-      <div class="brand"><span class="dot"></span> ARIA</div>
+      <a class="brand" href="/home" aria-label="Aria home">
+        <img class="brand-mark" src="/static/images/aria-favicon.png" alt="" />
+        <span>Aria</span>
+        <span class="brand-divider" aria-hidden="true">|</span>
+      </a>
       <div class="nav-links">
         <a href="/home">Home</a>
-        <a href="/get-token">Get Token</a>
-        <a href="/request-access">Access</a>
-        <a href="/login">Login</a>
+        <a href="/features">Features</a>
+        <a href="/signup">Sign up</a>
+        <a href="/login">Sign in</a>
         <a href="/dashboard">Dashboard</a>
       </div>
     </nav>
@@ -26,15 +30,34 @@
     <!-- HERO -->
     <section class="home-hero">
       <div class="home-hero-inner">
-        <div class="home-eyebrow">Aria &mdash; Runtime Shell</div>
-        <h1 class="home-headline">Your selfbot.<br/>Your surface.</h1>
-        <p class="home-lead">Command flow, account masking, live telemetry, and access management — all in one clean panel. No filler. No noise.</p>
+        <div class="home-eyebrow">Personal runtime / 01</div>
+        <h1 class="home-headline">Aria<span class="home-headline-accent">, in control.</span></h1>
+        <p class="home-lead">One place for your live runtime, commands, presence, history, and account controls.</p>
         <div class="home-cta-row">
-          <a class="btn btn-primary" href="/login">Enter Aria</a>
-          <a class="btn btn-ghost" href="/get-token">Get Token</a>
-          <a class="btn btn-ghost" href="/request-access">Request Access</a>
+          <a class="btn btn-primary" href="/signup">Create account <span aria-hidden="true">↗</span></a>
+          <a class="btn btn-ghost" href="/login">Sign in</a>
+        </div>
+        <div class="home-hero-status">
+          <span class="home-live-indicator" aria-hidden="true"></span>
+          <span>Runtime monitor</span>
+          <span class="home-status-divider"></span>
+          <span id="homeLastSync">Connecting to Aria</span>
         </div>
       </div>
+      <aside class="home-hero-art">
+        <div class="home-live-console" aria-label="Live bot activity">
+          <div class="home-live-console-top"><span><i></i> BOT / LIVE LOG</span><span id="homeLiveLogUpdated">CONNECTING</span></div>
+          <div class="home-live-instance">
+            <span class="home-live-mark" aria-hidden="true">A</span>
+            <div><small>INSTANCE</small><strong>$01</strong></div>
+            <span class="home-live-state">PRIMARY</span>
+          </div>
+          <div class="home-live-log-list" id="homeSignalFeed" aria-live="polite" aria-relevant="additions text">
+            <div class="home-live-log-empty">Waiting for runtime activity…</div>
+          </div>
+          <div class="home-live-console-foot"><span class="home-live-indicator"></span> SAFE EVENT SUMMARY</div>
+        </div>
+      </aside>
     </section>
 
     <!-- LIVE STATS -->
@@ -59,43 +82,103 @@
       </div>
     </section>
 
-    <!-- FEATURES -->
+    <section class="home-runtime-section" aria-label="Aria modules">
+      <div class="home-runtime-heading">
+        <span class="home-feature-num">ARIA / MODULE INDEX</span>
+        <h2>One runtime.<br><span>Every signal in view.</span></h2>
+        <a href="/features" class="home-feature-link">Explore features <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="home-runtime-list">
+        <a class="home-runtime-row" href="/features#commands"><span>01</span><strong>Command flow</strong><small>Catalog / history / telemetry</small><b aria-hidden="true">↗</b></a>
+        <a class="home-runtime-row" href="/features#presence"><span>02</span><strong>Presence lab</strong><small>Activity / status / profiles</small><b aria-hidden="true">↗</b></a>
+        <a class="home-runtime-row" href="/features#instances"><span>03</span><strong>Instance control</strong><small>Connect / inspect / manage</small><b aria-hidden="true">↗</b></a>
+        <a class="home-runtime-row" href="/features#operations"><span>04</span><strong>Operations</strong><small>Runtime logs / access / Nitro</small><b aria-hidden="true">↗</b></a>
+      </div>
+    </section>
+
+    <section class="home-showcase home-rpc-showcase" id="home-presence">
+      <div class="home-showcase-heading">
+        <span class="home-feature-num">PRESENCE / LIVE PREVIEW</span>
+        <h2>Make the status<br><span>feel like yours.</span></h2>
+        <p>Shape an activity, preview the result, and set it from Presence Studio. Changes made in the dashboard update the live preview as you edit.</p>
+        <a class="home-feature-link" href="/login?next=/dashboard">Open Presence Studio <span aria-hidden="true">↗</span></a>
+        <div class="home-variable-ideas" aria-label="Presence variable concepts">
+          <span><code>{spotify_lyrics}</code></span><span><code>{local_time}</code></span><span><code>{active_app}</code></span><span><code>{game_name}</code></span>
+        </div>
+      </div>
+      <div class="home-rpc-demo">
+        <div class="home-demo-topline"><span><i></i> RPC / LIVE</span><span>PREVIEW</span></div>
+        <div class="home-demo-profile">
+          <div class="home-demo-avatar">A<span></span></div>
+          <div><strong>aria.user</strong><small>sky over the city</small></div>
+          <span class="home-demo-presence">ONLINE</span>
+        </div>
+        <div class="home-demo-activity">
+          <div class="home-demo-art"><span class="home-equalizer"><i></i><i></i><i></i><i></i><i></i></span></div>
+          <div class="home-demo-activity-copy">
+            <span class="home-demo-kicker">LISTENING TO</span>
+            <strong>Afterglow</strong>
+            <span>Aria Radio · Night drive</span>
+            <div class="home-demo-progress"><i></i></div>
+            <small>1:42 <span>3:58</span></small>
+          </div>
+        </div>
+        <div class="home-demo-actions"><button type="button">Open player</button><button type="button">View profile</button></div>
+        <div class="home-demo-code"><code>.rpc set "Afterglow" "Aria Radio"</code><span>EXAMPLE</span></div>
+      </div>
+    </section>
+
+    <section class="home-trust-section" id="home-token">
+      <div class="home-trust-copy">
+        <span class="home-feature-num">INSTANCE LINK / CREDENTIAL BOUNDARY</span>
+        <h2>Your token is used<br><span>to start your instance.</span></h2>
+        <p>Connect it once during setup. The dashboard’s hosted-instance responses omit token values; the runtime manager uses the credential to start and maintain your linked instance.</p>
+        <a class="home-feature-link" href="/signup">Create your account <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="home-trust-flow" aria-label="Instance connection flow">
+        <div class="home-trust-step"><span class="home-trust-index">01</span><div><strong>Submit token</strong><small>Private connection form</small></div><span class="home-trust-state">INPUT</span></div>
+        <div class="home-trust-connector"><i></i></div>
+        <div class="home-trust-step"><span class="home-trust-index">02</span><div><strong>Validate account</strong><small>Confirm the linked identity</small></div><span class="home-trust-state">CHECK</span></div>
+        <div class="home-trust-connector"><i></i></div>
+        <div class="home-trust-step"><span class="home-trust-index">03</span><div><strong>Start instance</strong><small>Open the Aria dashboard</small></div><span class="home-trust-state">READY</span></div>
+      </div>
+    </section>
+
+    <!-- CONTROL SURFACES -->
     <section class="home-features-section">
       <div class="home-features-header">
-        <h2 class="home-features-title">Built different.</h2>
-        <p class="home-features-sub">Everything that makes Aria the right runtime shell.</p>
+        <h2 class="home-features-title">Choose your next move.</h2>
+        <p class="home-features-sub">Set up an account or explore the runtime.</p>
       </div>
       <div class="home-features-grid">
-        <div class="home-feature-item">
-          <div class="home-feature-num">01</div>
-          <h3>Real telemetry</h3>
-          <p>Live gateway state, response latency, and command history — not stubbed numbers.</p>
-        </div>
-        <div class="home-feature-item">
-          <div class="home-feature-num">02</div>
-          <h3>One surface</h3>
-          <p>Access review, instance control, RPC, presence, and nitro management all in a unified panel.</p>
-        </div>
-        <div class="home-feature-item">
-          <div class="home-feature-num">03</div>
-          <h3>Clean entry path</h3>
-          <p>Request access &rarr; approve &rarr; login &rarr; connect. No extra steps.</p>
-        </div>
-        <div class="home-feature-item">
-          <div class="home-feature-num">04</div>
-          <h3>Access control</h3>
-          <p>Admin-gated dashboards with token-based login and request queue management.</p>
-        </div>
-        <div class="home-feature-item">
-          <div class="home-feature-num">05</div>
-          <h3>Presence lab</h3>
-          <p>Rich presence, custom status, and activity control from one configuration pane.</p>
-        </div>
-        <div class="home-feature-item">
-          <div class="home-feature-num">06</div>
-          <h3>Multi-instance</h3>
-          <p>Host and switch between multiple selfbot instances without leaving the panel.</p>
-        </div>
+        <a class="home-feature-item" href="/login?next=/dashboard">
+          <span class="home-feature-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="6" height="6" rx="1"/><rect x="11.5" y="3" width="6" height="6" rx="1"/><rect x="2.5" y="11" width="6" height="6" rx="1"/><rect x="11.5" y="11" width="6" height="6" rx="1"/></svg></span>
+          <span class="home-feature-num">01 / WORKSPACE</span>
+          <h3>Dashboard</h3>
+          <p>Open the live control surface for your connected runtime.</p>
+          <span class="home-feature-link">Enter workspace <span aria-hidden="true">↗</span></span>
+        </a>
+        <a class="home-feature-item" href="/features">
+          <span class="home-feature-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5 3.5 5v4.5c0 4 2.7 6.6 6.5 8 3.8-1.4 6.5-4 6.5-8V5L10 2.5z"/><path d="M7.5 10h5M10 7.5v5"/></svg></span>
+          <span class="home-feature-num">02 / FEATURES</span>
+          <h3>Explore Aria</h3>
+          <p>See the controls available in your runtime.</p>
+          <span class="home-feature-link">View features <span aria-hidden="true">↗</span></span>
+        </a>
+        <a class="home-feature-item" href="/signup">
+          <span class="home-feature-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="10" r="4"/><path d="m10 10 7.5 0m-2.5 0v2m-2.5-2v2"/></svg></span>
+          <span class="home-feature-num">03 / ACCOUNT</span>
+          <h3>Create account</h3>
+          <p>Set up your account, then link an instance.</p>
+          <span class="home-feature-link">Get started <span aria-hidden="true">↗</span></span>
+        </a>
+        <a class="home-feature-item" href="/login?next=/support">
+          <span class="home-feature-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h14v10H8l-5 3V4z"/><path d="M6.5 8h7M6.5 11h4"/></svg></span>
+          <span class="home-feature-num">04 / SUPPORT</span>
+          <h3>Support</h3>
+          <p>Open a support conversation from your account.</p>
+          <span class="home-feature-link">Get help <span aria-hidden="true">↗</span></span>
+        </a>
       </div>
     </section>
 
@@ -105,8 +188,9 @@
       <div class="home-footer-links">
         <a href="/tos">Terms</a>
         <a href="/privacy">Privacy</a>
-        <a href="/access-pending">Access Queue</a>
-        <a href="/login">Login</a>
+        <a href="/privacy#cookies">Cookies</a>
+        <a href="/features">Features</a>
+        <a href="/login">Sign in</a>
       </div>
     </footer>
 
@@ -182,9 +266,45 @@
       });
     });
 
+    async function updateHomeActivity() {
+      const feed = document.getElementById('homeSignalFeed');
+      if (!feed) return;
+      try {
+        const response = await fetch('/api/public/activity', { cache: 'no-store', credentials: 'same-origin' });
+        if (!response.ok) return;
+        const data = await response.json();
+        const events = Array.isArray(data.events) ? data.events.slice(0, 4) : [];
+        feed.replaceChildren();
+        if (!events.length) {
+          const empty = document.createElement('div');
+          empty.className = 'home-live-log-empty';
+          empty.textContent = 'No recent runtime activity.';
+          feed.appendChild(empty);
+        }
+        const glyphs = { COMMAND: '›', WATCHER: '✳', GATEWAY: '↻', RUNTIME: '!' };
+        events.forEach((event, index) => {
+          const row = document.createElement('div');
+          row.className = 'home-live-log-row';
+          row.style.setProperty('--row-order', String(index));
+          const icon = document.createElement('span');
+          icon.className = `home-live-log-icon ${String(event.kind || '').toLowerCase()}`;
+          icon.setAttribute('aria-hidden', 'true');
+          icon.textContent = glyphs[event.kind] || '·';
+          const label = document.createElement('strong');
+          label.textContent = event.label || 'Runtime event';
+          const time = document.createElement('time');
+          time.textContent = event.time || 'live';
+          row.append(icon, label, time);
+          feed.appendChild(row);
+        });
+        const updated = document.getElementById('homeLiveLogUpdated');
+        if (updated) updated.textContent = `SYNC ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+      } catch (_) {}
+    }
+
     async function updateStats() {
       try {
-        const res = await fetch('/api/public/stats');
+        const res = await fetch('/api/public/stats', { cache: 'no-store', credentials: 'same-origin' });
         const data = await res.json();
         if (data && data.stats) {
           const s = data.stats;
@@ -193,9 +313,13 @@
           set('stat-connected',  s.connected_count || 0);
           set('stat-registered', s.total_registered|| 0);
           set('stat-commands',   s.command_count   || 0);
+          const sync = document.getElementById('homeLastSync');
+          if (sync) sync.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         }
       } catch (_) {}
     }
+    updateHomeActivity();
+    setInterval(updateHomeActivity, 7000);
     updateStats();
     setInterval(updateStats, 6000);
   </script>

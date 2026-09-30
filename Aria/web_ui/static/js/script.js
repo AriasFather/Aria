@@ -78,10 +78,6 @@ function dismissLoader() {
         setTimeout(() => { if (loader.parentNode) loader.parentNode.removeChild(loader); }, 500);
     }
 }
-window.addEventListener('DOMContentLoaded', () => {
-    setTimeout(dismissLoader, 900);
-});
-
 // ═══════════════════════════════════════════════════════════════
 //  ARIA TOAST NOTIFICATION SYSTEM
 // ═══════════════════════════════════════════════════════════════
@@ -906,23 +902,6 @@ async function loadHistory() {
 
 // ── Boost ─────────────────────────────────────────────────────────────────────
 
-const BOOST_LABELS = {
-    boost_status:    'Boost Status',
-    tracked_servers: 'Tracked Servers',
-    boosted_servers: 'Boosted Servers',
-    total_boosts:    'Total Boosts',
-    guild_id:        'Guild ID',
-    guild_name:      'Guild',
-    boost_count:     'Boosts Applied',
-    slots_total:     'Total Slots',
-    slots_remaining: 'Slots Remaining',
-    nitro_type:      'Nitro Type',
-    active:          'Active',
-    started_at:      'Started',
-    ends_at:         'Expires',
-    token_count:     'Tokens Used',
-};
-
 async function loadBoost() {
     const res = await fetchJSON('/api/boost');
     if (!res || !res.data) return;
@@ -951,46 +930,6 @@ async function loadBoost() {
     if (fill)   fill.style.width   = pct + '%';
     if (cdFill) { cdFill.style.width = cdPct + '%'; cdFill.style.left = pct + '%'; }
 
-    // Server boost table
-    const serverBoosts  = data.server_boosts || {};
-    // Only show servers with boosts for non-admin users
-    let boostedEntries = Object.entries(serverBoosts).filter(([, v]) => Number(v) > 0);
-    const countEl = document.getElementById('boostServerCount');
-    if (countEl) countEl.textContent = boostedEntries.length + ' servers';
-    const tbody = document.getElementById('boostServerBody');
-    if (tbody) {
-        if (!boostedEntries.length) {
-            tbody.innerHTML = '<tr><td colspan="3" class="empty-row">No boosts applied. Connect a Nitro account and assign boosts.</td></tr>';
-        } else {
-            const max = Math.max(1, ...boostedEntries.map(([, v]) => Number(v) || 0));
-            tbody.innerHTML = boostedEntries.map(([id, count]) => {
-                const n = Number(count) || 0;
-                return `<tr>
-                    <td class="cmd-aliases mono">${esc(id)}</td>
-                    <td style="font-weight:700;color:var(--a2)">${n}</td>
-                    <td class="boost-bar-cell"><div class="boost-mini-bar" style="width:${Math.round((n/max)*100)}%"></div></td>
-                </tr>`;
-            }).join('');
-        }
-    }
-
-    // Extra info cards (rotation etc.)
-    const extra = document.getElementById('boostExtraCards');
-    if (extra) {
-        const rotServers = Array.isArray(data.rotation_servers)
-            ? (data.rotation_servers.join(', ') || 'None')
-            : '—';
-        extra.innerHTML = [
-            ['Available Boosts', data.available_boosts],
-            ['Rotation Hours',   data.rotation_hours],
-            ['Rotation Servers', rotServers],
-        ].map(([k, v]) =>
-            `<div class="boost-extra-card">
-                <div class="boost-extra-key">${esc(k)}</div>
-                <div class="boost-extra-val">${esc(String(v ?? '—'))}</div>
-            </div>`
-        ).join('');
-    }
 }
 
 // ── Help / Token Guide ───────────────────────────────────────────────────────
@@ -1185,6 +1124,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Section router ────────────────────────────────────────────────────────────
 function loadSection(name) {
     if (name === 'overview')  loadOverview();
+    if (name === 'owner')     loadOwnerPanel();
     if (name === 'commands')  loadCommands();
     if (name === 'analytics') loadAnalytics();
     if (name === 'history')   loadHistory();
@@ -2290,6 +2230,11 @@ function showAccessReqBulkMsg(msg, ok) {
 
 function applyRoleVisibility(profile) {
     const isAdmin = !!(profile && profile.is_admin);
+    const isOwner = !!(profile && profile.is_owner);
+    document.querySelectorAll('[data-owner-only="true"]').forEach(el => {
+        el.hidden = !isOwner;
+        if (el.classList.contains('nav-item')) el.dataset.hiddenByRole = String(!isOwner);
+    });
     const adminOnly = document.querySelectorAll('[data-admin-only="true"], .admin-only');
     adminOnly.forEach(el => {
         if (isAdmin) {
@@ -2305,10 +2250,102 @@ function applyRoleVisibility(profile) {
     if (usersTitle && !isAdmin) usersTitle.textContent = 'My account';
 
     const active = document.querySelector('.nav-item.active');
-    if (active && active.dataset.hiddenByRole === 'true') {
+    if (active && (active.hidden || active.dataset.hiddenByRole === 'true')) {
         const fallback = document.querySelector('.nav-item[data-section="overview"]');
         if (fallback) fallback.click();
     }
+}
+
+async function loadOwnerPanel() {
+    const res = await fetchJSON('/api/owner/summary');
+    if (!res || !res.ok) {
+        setText('ownerGatewayState', 'Unavailable');
+        setText('ownerIdentityState', 'Unavailable');
+        return;
+    }
+
+    const data = res.data || {};
+    setText('ownerAccountTotal', data.total_accounts ?? 0);
+    setText('ownerAdminTotal', data.admin_accounts ?? 0);
+    setText('ownerPendingTotal', data.pending_requests ?? 0);
+    setText('ownerGatewayState', data.connected ? 'Connected' : 'Offline');
+    setText('ownerGatewayLatency', `Latency ${data.gateway_latency_ms == null ? '—' : `${data.gateway_latency_ms} ms`}`);
+    setText('ownerIdentityState', data.connected ? 'ready' : 'offline');
+    setText('ownerIdentityName', data.username || '—');
+    setText('ownerIdentityId', data.user_id || '—');
+
+    const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    setText('ownerAccountBadge', `${accounts.length} accounts`);
+    const accountBody = document.getElementById('ownerAccountBody');
+    if (accountBody) {
+        accountBody.innerHTML = accounts.length ? accounts.map(account => {
+            const username = String(account.username || 'Unnamed account');
+            return `<tr data-username="${esc(username.toLowerCase())}">
+                <td class="owner-account-name">${esc(username)}</td>
+                <td>${esc(account.role || 'user')}</td>
+                <td>${fmtTs(account.created_at)}</td>
+                <td>${fmtTs(account.last_login_at)}</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="4" class="empty-row">No accounts yet.</td></tr>';
+    }
+
+    const resetRequests = Array.isArray(data.password_reset_requests) ? data.password_reset_requests : [];
+    setText('ownerResetBadge', `${resetRequests.length} pending`);
+    const resetList = document.getElementById('ownerResetRequestsList');
+    if (resetList) {
+        resetList.innerHTML = resetRequests.length ? resetRequests.map(item => {
+            const requestId = esc(item.id || '');
+            const username = esc(item.username || 'Account');
+            return `<article class="owner-reset-request">
+                <div class="owner-reset-request-main"><strong>${username}</strong><span>${esc(item.reason || 'Password reset requested')}</span><small>${relativeTime(item.timestamp)}</small></div>
+                <div class="owner-reset-request-actions">
+                    <button class="btn btn-primary" type="button" onclick="approveAccessRequest('${requestId}', 'password_reset')">Approve reset</button>
+                    <button class="btn btn-ghost" type="button" onclick="denyAccessRequest('${requestId}')" aria-label="Deny reset request for ${username}">Deny</button>
+                </div>
+            </article>`;
+        }).join('') : '<div class="log-loading">No pending password reset requests.</div>';
+    }
+}
+
+function filterOwnerAccounts() {
+    const query = String(document.getElementById('ownerAccountSearch')?.value || '').trim().toLowerCase();
+    document.querySelectorAll('#ownerAccountBody tr[data-username]').forEach(row => {
+        row.hidden = !row.dataset.username.includes(query);
+    });
+}
+
+function showOwnerResetCredential(username, password) {
+    const overlay = document.getElementById('ownerResetCredential');
+    if (!overlay) return;
+    setText('ownerResetCredentialUser', username || 'Account');
+    setText('ownerResetCredentialValue', password || '');
+    overlay.hidden = false;
+    document.getElementById('ownerResetDialogTitle')?.focus();
+}
+
+async function copyOwnerResetCredential() {
+    const password = document.getElementById('ownerResetCredentialValue')?.textContent || '';
+    if (!password) return;
+    try {
+        await navigator.clipboard.writeText(password);
+        showOwnerResetMessage('Temporary password copied. This view will not be available again.', true);
+    } catch {
+        showOwnerResetMessage('Clipboard unavailable. Select the temporary password to copy it.', false);
+    }
+}
+
+function dismissOwnerResetCredential() {
+    const overlay = document.getElementById('ownerResetCredential');
+    if (overlay) overlay.hidden = true;
+    setText('ownerResetCredentialValue', '');
+    setText('ownerResetCredentialUser', 'Account');
+}
+
+function showOwnerResetMessage(message, ok) {
+    const el = document.getElementById('ownerResetMessage');
+    if (!el) return;
+    el.textContent = message;
+    el.className = 'owner-reset-message settings-msg ' + (ok ? 'ok' : 'err');
 }
 
 async function loadDashProfile() {
@@ -2444,8 +2481,9 @@ async function loadAccessRequests() {
 
 async function approveAccessRequest(reqId, reqType = 'access') {
     const isPasswordReset = String(reqType || '').toLowerCase() === 'password_reset';
+    if (isPasswordReset && !confirm('Rotate this account password and show the generated temporary password once?')) return;
     const customUserId = isPasswordReset ? '' : (prompt('Optional: set custom user_id (leave empty for auto)') || '');
-    const customPassword = prompt('Optional: set custom password (leave empty for auto)') || '';
+    const customPassword = isPasswordReset ? '' : (prompt('Optional: set custom password (leave empty for auto)') || '');
     const body = {};
     if (customUserId.trim()) body.user_id = customUserId.trim();
     if (customPassword.trim()) body.password = customPassword.trim();
@@ -2453,15 +2491,24 @@ async function approveAccessRequest(reqId, reqType = 'access') {
     try {
         const r = await fetch(`/api/dash/requests/${encodeURIComponent(reqId)}/approve`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || '',
+            },
             body: JSON.stringify(body),
         });
         const res = await r.json();
         if (res && res.ok) {
-            showDashUsersMsg(`Approved: ${res.user_id} (pw: ${res.password})`, true);
+            if (isPasswordReset) {
+                showOwnerResetCredential(res.username, res.password);
+                showOwnerResetMessage('Reset approved. Copy the generated password now; it will not be stored in this panel.', true);
+            } else {
+                showDashUsersMsg(`Approved account ${res.user_id}.`, true);
+            }
             trackDashboardAction('request_approve', `Approved request ${reqId}`);
             loadAccessRequests();
             loadDashUsers();
+            loadOwnerPanel();
         } else {
             showDashUsersMsg((res && res.error) || 'Approve failed.', false);
         }
@@ -2479,6 +2526,7 @@ async function denyAccessRequest(reqId) {
             trackDashboardAction('request_deny', `Denied request ${reqId}`);
             loadAccessRequests();
             loadDashUsers();
+            loadOwnerPanel();
         } else {
             showDashUsersMsg((res && res.error) || 'Deny failed.', false);
         }
@@ -2488,7 +2536,7 @@ async function denyAccessRequest(reqId) {
 }
 
 function showDashUsersMsg(msg, ok) {
-    const el = document.getElementById('dashUsersMsg');
+    const el = document.getElementById('dashUsersMsg') || document.getElementById('ownerResetMessage');
     if (!el) return;
     el.textContent = msg;
     el.className = 'settings-msg ' + (ok ? 'ok' : 'err');
@@ -2697,9 +2745,18 @@ setInterval(() => {
 }, 7000);
 
 // ── Initial load ──────────────────────────────────────────────────────────────
-loadOverview();
-loadDashProfile();
-refreshNotificationCenter();
+async function bootDashboard() {
+    const initialRequests = Promise.allSettled([
+        loadOverview(),
+        loadDashProfile(),
+        refreshNotificationCenter(),
+    ]);
+    const timeout = new Promise(resolve => setTimeout(() => resolve(false), 8000));
+    const isSynced = await Promise.race([initialRequests.then(() => true), timeout]);
+    setText('loaderStatus', isSynced ? 'RUNTIME / INITIAL SYNC COMPLETE' : 'RUNTIME / CONTINUING CONNECTION');
+    setTimeout(dismissLoader, 300);
+}
+bootDashboard();
 // Welcome toast
 setTimeout(() => showToast('Welcome back 👋', 'Aria dashboard loaded successfully', 'ok', 4000), 1200);
 
@@ -2782,6 +2839,7 @@ async function loadChatSessions() {
         _chatState.sessions.forEach(session => {
             const item = document.createElement('div');
             item.className = 'chat-session-item' + (session.session_id === _chatState.currentSessionId ? ' active' : '');
+            item.dataset.sessionId = session.session_id;
             item.onclick = () => openChatSession(session.session_id, item);
             
             const unreadCount = (session.unread_count || 0);
@@ -2800,6 +2858,15 @@ async function loadChatSessions() {
             
             sessionsList.appendChild(item);
         });
+
+        if (_chatState.currentSessionId) {
+            const activeItem = Array.from(sessionsList.children).find(
+                item => item.dataset.sessionId === _chatState.currentSessionId
+            );
+            if (activeItem) {
+                await openChatSession(_chatState.currentSessionId, activeItem);
+            }
+        }
     } catch (e) {
         console.error('[Chat] Load sessions error:', e);
     }

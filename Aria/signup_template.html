@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account | Aria</title>
+  <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
+  <link rel="stylesheet" href="/static/css/panel_pages.css" />
+</head>
+<body class="panel-page">
+  <div class="page-wrap page-wrap-sm">
+    <nav class="top-nav">
+      <a class="brand" href="/home" aria-label="Aria home">
+        <img class="brand-mark" src="/static/images/aria-favicon.png" alt="" />
+        <span>Aria</span><span class="brand-divider" aria-hidden="true">|</span>
+      </a>
+      <div class="nav-links"><a href="/home">Home</a><a href="/features">Features</a><a href="/login">Sign in</a></div>
+    </nav>
+
+    <section class="panel signup-panel">
+      <div class="panel-head site-hero">
+        <div class="hero-copy">
+          <span class="kicker"><i></i> Account / 01</span>
+          <h1 class="page-title">Create account</h1>
+          <p class="page-sub">Set up your Aria account. After sign in, connect an instance to open its dashboard.</p>
+        </div>
+        <div class="signup-sequence" aria-label="Account setup steps">
+          <div><span>01</span><strong>Account</strong></div>
+          <div><span>02</span><strong>Sign in</strong></div>
+          <div><span>03</span><strong>Instance</strong></div>
+        </div>
+      </div>
+      <div class="panel-body signup-body">
+        __ERROR_BLOCK__
+        <form class="form signup-form" method="post" action="/signup">
+          <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
+          <div class="field">
+            <label for="signupUsername">Username</label>
+            <input id="signupUsername" type="text" name="username" placeholder="Choose a username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]{3,32}" autocomplete="username" autocapitalize="none" spellcheck="false" required />
+          </div>
+          <div class="field">
+            <label for="signupPassword">Password</label>
+            <div class="password-input-wrap">
+              <input id="signupPassword" type="password" name="password" placeholder="At least 8 characters" minlength="8" maxlength="128" autocomplete="new-password" required />
+              <button type="button" class="password-toggle-icon" onclick="togglePasswordField('signupPassword', this)" aria-label="Show password" title="Show password">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 10s3-5.5 8.5-5.5S18.5 10 18.5 10s-3 5.5-8.5 5.5S1.5 10 1.5 10z"></path><circle cx="10" cy="10" r="2.5"></circle></svg>
+              </button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="signupConfirmPassword">Confirm password</label>
+            <div class="password-input-wrap">
+              <input id="signupConfirmPassword" type="password" name="confirm_password" placeholder="Enter your password again" minlength="8" maxlength="128" autocomplete="new-password" required />
+              <button type="button" class="password-toggle-icon" onclick="togglePasswordField('signupConfirmPassword', this)" aria-label="Show password" title="Show password">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 10s3-5.5 8.5-5.5S18.5 10 18.5 10s-3 5.5-8.5 5.5S1.5 10 1.5 10z"></path><circle cx="10" cy="10" r="2.5"></circle></svg>
+              </button>
+            </div>
+          </div>
+          <label class="signup-consent">
+            <input type="checkbox" name="accept_policy" required />
+            <span>By registering you agree to our <a href="/privacy">Privacy Policy</a> and <a href="/privacy#cookies">Cookie Policy</a>.</span>
+          </label>
+          <div class="actions signup-actions">
+            <button class="btn btn-primary" type="submit">Create account <span aria-hidden="true">&rarr;</span></button>
+          </div>
+          <p class="signup-switch">Already have one? <a href="/login">Sign in</a></p>
+        </form>
+      </div>
+    </section>
+  </div>
+  <script>
+    function togglePasswordField(inputId, btn) {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      input.type = input.type === 'password' ? 'text' : 'password';
+      const visible = input.type === 'text';
+      btn.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+      btn.setAttribute('title', visible ? 'Hide password' : 'Show password');
+      btn.classList.toggle('is-visible', visible);
+    }
+  </script>
+</body>
+</html>

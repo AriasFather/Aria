@@ -37,6 +37,7 @@ except ImportError:
 import base64
 import importlib
 import formatter as fmt
+from profile_avatar import download_avatar_data_uri
 
 try:
     from utils.general import is_valid_emoji
@@ -62,7 +63,6 @@ from account_data_manager import AccountDataManager
 from badge_scraper import BadgeScraper
 from discord_api_types import ActivityType, RelationshipType
 from format_bootstrap import install_global_formatter
-from quest import QuestSystem
 from developer import DeveloperTools
 from command_integration import integrate_command_engine
 import sys
@@ -1596,7 +1596,6 @@ def main():
     history_manager = HistoryManager(bot.api)
     account_data_manager = AccountDataManager(bot.api)
     badge_scraper = BadgeScraper(bot.api, history_manager)
-    quest_system = QuestSystem(bot.api)
     guild_rotator = GuildRotator(bot.api)
     developer_tools = DeveloperTools()
     
@@ -1607,7 +1606,6 @@ def main():
     bot.history_manager = history_manager
     bot.account_data_manager = account_data_manager
     bot.badge_scraper = badge_scraper
-    bot.quest_system = quest_system
     bot.developer_tools = developer_tools
     bot.super_react_client = super_react_client
     
@@ -3850,31 +3848,17 @@ Example Usage:
         image_url = args[0]
         api = ctx["api"]
         try:
-            r = api.session.get(image_url, timeout=15)
-            if r.status_code != 200:
-                msg = api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: Failed to download image (HTTP {r.status_code})")
-                return
-
-            ct = r.headers.get("Content-Type", "").lower()
-            url_lower = image_url.lower().split("?")[0]
-            if "gif" in ct or url_lower.endswith(".gif"):
-                fmt = "gif"
-            elif "jpeg" in ct or "jpg" in ct or url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
-                fmt = "jpeg"
-            elif "webp" in ct or url_lower.endswith(".webp"):
-                fmt = "webp"
-            else:
-                fmt = "png"
-
-            b64 = base64.b64encode(r.content).decode()
-            ok, patch, err = _profile_patch(api, {"avatar": f"data:image/{fmt};base64,{b64}"}, ["/users/@me"])
+            avatar_data = download_avatar_data_uri(image_url)
+            ok, patch, err = _profile_patch(api, {"avatar": avatar_data}, ["/users/@me"])
             if ok:
-                msg = api.send_message(ctx["channel_id"], "> **✓ SetPFP** :: Profile picture updated")
+                api.send_message(ctx["channel_id"], "> **✓ SetPFP** :: Profile picture updated")
             else:
                 code = patch.status_code if patch else "no response"
-                msg = api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: Failed HTTP {code}{' — ' + err if err else ''}")
+                api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: Failed HTTP {code}{' — ' + err if err else ''}")
+        except ValueError as e:
+            api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: {e}")
         except Exception as e:
-            msg = api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: Error: {str(e)[:80]}")
+            api.send_message(ctx["channel_id"], f"> **✗ SetPFP** :: Error: {str(e)[:120]}")
     @bot.command(name="servercopy")
     def servercopy(ctx, args):
         global LAST_SERVER_COPY
@@ -6848,48 +6832,93 @@ Example Usage:
         if not guild_id:
             api.send_message(channel_id, "> **✗ ReadAll** :: Not in a guild. Provide a guild_id.")
             return
-        status = api.send_message(channel_id, f"> **ReadAll** :: Fetching up to {limit} messages/channel…")
+        status = api.send_message(channel_id, f"> **ReadAll** :: Fetching up to {limit} messages/channel in the background…")
         status_id = (status or {}).get("id")
-        ch_resp = api.request("GET", f"/guilds/{guild_id}/channels")
-        if not ch_resp or ch_resp.status_code != 200:
-            api.edit_message(channel_id, status_id, "> **✗ ReadAll** :: Could not fetch channels.")
-            return
-        text_types = {0, 5, 10, 11, 12}
-        channels = [c for c in (ch_resp.json() or []) if c.get("type") in text_types]
-        if not channels:
-            api.edit_message(channel_id, status_id, "> **ReadAll** :: No readable channels found.")
-            return
-        all_msgs = []
-        skipped = 0
-        import time as _rt
-        for ch in channels:
-            cid_ = ch.get("id")
-            if not cid_:
-                continue
-            r = api.request("GET", f"/channels/{cid_}/messages?limit={limit}")
-            if r and r.status_code == 200:
-                msgs = r.json() or []
-                for m in msgs:
-                    all_msgs.append({
-                        "channel": ch.get("name", cid_),
-                        "author": m.get("author", {}).get("username", "?"),
-                        "content": (m.get("content") or "")[:80],
-                        "ts": m.get("timestamp", "")[:10],
-                    })
+
+        def _readall_worker():
+            try:
+                output = ""
+                ch_resp = api.request("GET", f"/guilds/{guild_id}/channels")
+                if not ch_resp or ch_resp.status_code != 200:
+                    output = "> **✗ ReadAll** :: Could not fetch channels."
+                else:
+                    text_types = {0, 5, 10, 11, 12}
+                    channel_payload = ch_resp.json()
+                    if not isinstance(channel_payload, list):
+                        output = "> **✗ ReadAll** :: Invalid channel list response."
+                        channels = []
+                    else:
+                        channels = [
+                            item for item in channel_payload
+                            if isinstance(item, dict) and item.get("type") in text_types
+                        ]
+                    if not channels:
+                        if not output.startswith("> **✗ ReadAll**"):
+                            output = "> **ReadAll** :: No readable channels found."
+                    else:
+                        all_msgs = []
+                        skipped = 0
+                        for ch in channels:
+                            channel_id_to_read = ch.get("id")
+                            if not channel_id_to_read:
+                                skipped += 1
+                                continue
+                            try:
+                                response = api.request(
+                                    "GET",
+                                    f"/channels/{channel_id_to_read}/messages?limit={limit}",
+                                )
+                            except Exception as exc:
+                                print(f"[READALL] Channel message fetch failed: {exc}")
+                                skipped += 1
+                                continue
+                            if response and response.status_code == 200:
+                                try:
+                                    messages = response.json()
+                                    if not isinstance(messages, list):
+                                        raise ValueError("message response was not a list")
+                                except Exception:
+                                    messages = []
+                                    skipped += 1
+                                for message in messages:
+                                    if not isinstance(message, dict):
+                                        skipped += 1
+                                        continue
+                                    author = message.get("author")
+                                    if not isinstance(author, dict):
+                                        author = {}
+                                    all_msgs.append({
+                                        "channel": ch.get("name") or channel_id_to_read,
+                                        "author": author.get("username", "?"),
+                                        "content": (message.get("content") or "")[:80],
+                                        "ts": (message.get("timestamp") or "")[:10],
+                                    })
+                            else:
+                                skipped += 1
+
+                        all_msgs.sort(key=lambda item: item["ts"], reverse=True)
+                        lines = [
+                            f"**ReadAll — {len(channels)} channels, {len(all_msgs)} messages**"
+                            + (f" ({skipped} skipped/no-access)" if skipped else "")
+                        ]
+                        for message in all_msgs[:80]:
+                            snippet = message["content"].replace("\n", " ") or "<no text>"
+                            lines.append(
+                                f"`#{message['channel']}` **{message['author']}**: {snippet}"
+                            )
+                        output = "\n".join(lines)
+                        if len(output) > 1900:
+                            output = output[:1900] + "\n…"
+            except Exception as exc:
+                print(f"[READALL] Guild message scan failed: {exc}")
+                output = "> **✗ ReadAll** :: Failed while reading guild messages."
+
+            if status_id:
+                api.edit_message(channel_id, status_id, output)
             else:
-                skipped += 1
-            _rt.sleep(0.25)
-        all_msgs.sort(key=lambda x: x["ts"], reverse=True)
-        top = all_msgs[:80]
-        lines = [f"**ReadAll — {len(channels)} channels, {len(all_msgs)} messages**"
-                 + (f" ({skipped} skipped/no-access)" if skipped else "")]
-        for m in top:
-            snippet = m["content"].replace("\n", " ") or "<no text>"
-            lines.append(f"`#{m['channel']}` **{m['author']}**: {snippet}")
-        output = "\n".join(lines)
-        if len(output) > 1900:
-            output = output[:1900] + "\n…"
-        api.edit_message(channel_id, status_id, output)
+                api.send_message(channel_id, output)
+
+        threading.Thread(target=_readall_worker, daemon=True, name="readall-messages").start()
 
     @bot.command(name="readalldms", aliases=["readdms", "dumpdms"])
     def readalldms_cmd(ctx, args):
@@ -6952,59 +6981,46 @@ Example Usage:
     @bot.command(name="readallguilds", aliases=["markread", "clearnotifs", "ackall", "clearall"])
     def readallguilds_cmd(ctx, args):
         """Acknowledge (mark as read) all channels in every guild to clear pings/notifications."""
-        import time as _ragt
         api = ctx["api"]
         channel_id = ctx["channel_id"]
 
-        status = api.send_message(channel_id, "> **ReadAllGuilds** :: Fetching guilds…")
+        status = api.send_message(channel_id, "> **ReadAllGuilds** :: Processing notifications in the background…")
         status_id = (status or {}).get("id")
 
-        # Fetch all guilds the account is in
-        guilds_r = api.request("GET", "/users/@me/guilds")
-        if not guilds_r or guilds_r.status_code != 200:
-            api.edit_message(channel_id, status_id, "> **✗ ReadAllGuilds** :: Failed to fetch guilds.")
-            return
+        def _acknowledge_notifications():
+            try:
+                result = api.acknowledge_all_guilds()
+                if result["error"]:
+                    summary = f"> **✗ ReadAllGuilds** :: {result['error']}"
+                elif not result["guilds"]:
+                    summary = "> **ReadAllGuilds** :: No guilds found."
+                else:
+                    summary = (
+                        f"> **ReadAllGuilds** :: Acknowledged {result['acked']}/"
+                        f"{result['channels']} channels across {result['guilds']} guilds"
+                    )
+                    if result["guilds_failed"] or result["channels_failed"]:
+                        summary += (
+                            f" ({result['guilds_failed']} guilds and "
+                            f"{result['channels_failed']} channels failed)"
+                        )
+                if status_id:
+                    api.edit_message(channel_id, status_id, summary)
+                else:
+                    api.send_message(channel_id, summary)
+            except Exception as exc:
+                print(f"[READALL] Background notification acknowledgement failed: {exc}")
+                message = "> **✗ ReadAllGuilds** :: Failed while processing notifications."
+                if status_id:
+                    api.edit_message(channel_id, status_id, message)
+                else:
+                    api.send_message(channel_id, message)
 
-        guilds = guilds_r.json() or []
-        if not guilds:
-            api.edit_message(channel_id, status_id, "> **ReadAllGuilds** :: No guilds found.")
-            return
-
-        text_types = {0, 5, 10, 11, 12}
-        total_acked = 0
-        total_channels = 0
-        skipped_guilds = 0
-
-        for guild in guilds:
-            gid = guild.get("id")
-            if not gid:
-                continue
-            ch_r = api.request("GET", f"/guilds/{gid}/channels")
-            if not ch_r or ch_r.status_code != 200:
-                skipped_guilds += 1
-                continue
-            channels = [c for c in (ch_r.json() or []) if c.get("type") in text_types]
-            total_channels += len(channels)
-            for ch in channels:
-                cid_ = ch.get("id")
-                if not cid_:
-                    continue
-                # Fetch last message to get the last_message_id to ack up to
-                msgs_r = api.request("GET", f"/channels/{cid_}/messages?limit=1")
-                if msgs_r and msgs_r.status_code == 200:
-                    msgs = msgs_r.json() or []
-                    if msgs:
-                        last_id = msgs[0].get("id")
-                        if last_id:
-                            api.request("POST", f"/channels/{cid_}/messages/{last_id}/ack", data={"token": None})
-                            total_acked += 1
-                _ragt.sleep(0.15)
-            _ragt.sleep(0.1)
-
-        summary = f"> **✓ ReadAllGuilds** :: Cleared notifications — {total_acked} channels acked across {len(guilds)} guilds"
-        if skipped_guilds:
-            summary += f" ({skipped_guilds} guilds skipped)"
-        api.edit_message(channel_id, status_id, summary)
+        threading.Thread(
+            target=_acknowledge_notifications,
+            daemon=True,
+            name="readall-guilds",
+        ).start()
 
     global AUTOBUMP_CONFIG
     AUTOBUMP_CONFIG = {}  # guild_id -> {"channel_id": "...", "interval": 3600}
@@ -7079,7 +7095,6 @@ Example Usage:
             "afk": "AFK",
             "nitro": "Nitro",
             "agct": "AGCT",
-            "quest": "Quest",
             "owner": "Owner",
         }
         category_alias_map = {
@@ -8664,68 +8679,6 @@ Example Usage:
                 "commandsraw, allcmds",
             ),
 
-            # ── Quest ────────────────────────────────────────────────────────
-            "quest": {
-                "title": f"{p}help Quest",
-                "lines": [
-                    ("quest", "Show quest status and list"),
-                    ("questdebug [id|link]", "Show quest task/event/platform debug"),
-                    ("queststart", "Start auto-completing quests"),
-                    ("queststop", "Stop auto-completing quests"),
-                    ("questrefresh", "Refresh quest data from Discord"),
-                    ("questenroll [id|link]", "Enroll all or one specific quest"),
-                    ("questclaim", "Claim all claimable quest rewards"),
-                    ("questautoclaimer <sub>", "All-in-one quest auto claimer"),
-                ],
-            },
-
-            "queststart": help_page(
-                f"{p}queststart",
-                "Starts automatically completing available Nitro quests.",
-            ),
-
-            "queststop": help_page(
-                f"{p}queststop",
-                "Stops the quest auto-completion process.",
-            ),
-
-            "questrefresh": help_page(
-                f"{p}questrefresh",
-                "Fetches the latest quest data from Discord API.",
-            ),
-
-            "questclaim": help_page(
-                f"{p}questclaim",
-                "Claims all currently claimable quest rewards.",
-                "",
-                {"type": "section", "text": "Aliases"},
-                "qclaim, qc",
-            ),
-
-            "questenroll": help_page(
-                f"{p}questenroll [quest_id|quest_link]",
-                "Enrolls in all available quests, or one specific quest by ID/link.",
-                "",
-                {"type": "section", "text": "Aliases"},
-                "qenroll, qe",
-            ),
-
-            "questdebug": help_page(
-                f"{p}questdebug [quest_id|quest_link]",
-                "Shows raw quest diagnostics: id, task type, event, progress, worthy flag, and platform hints.",
-                "",
-                {"type": "section", "text": "Aliases"},
-                "qdebug, qdbg",
-            ),
-
-            "questautoclaimer": help_page(
-                f"{p}questautoclaimer <start|stop|status|refresh|enroll|claim>",
-                "Unified quest automation command.",
-                "",
-                {"type": "section", "text": "Aliases"},
-                "quest-auto-claimer, qac, autoclaimer",
-            ),
-
             "all": {
                 "title": "All Commands",
                 "lines": [
@@ -8923,7 +8876,6 @@ Example Usage:
                 ("AFK", "AFK system"),
                 ("Nitro", "Nitro sniper"),
                 ("AGCT", "Anti-GC trap"),
-                ("Quest", "Quest tools"),
                 ("Owner", "Admin / owner only"),
             ]
             category_lines = [
@@ -9053,7 +9005,7 @@ Example Usage:
             "Guild": ["guild", "guilds", "myguilds", "server", "servercopy", "serverload", "join", "leave", "invite", "role", "channel"],
             "Messaging": ["purge", "spurge", "spam", "massdm", "dm", "mimic", "mock", "react", "typing", "snipe", "esnipe"],
             "User": ["userinfo", "friends", "mutual", "block", "auth", "unauth", "checktoken", "token", "hypesquad", "status", "client"],
-            "Activity": ["rpc", "vrrpc", "superreact", "autoreact", "quest"],
+                "Activity": ["rpc", "vrrpc", "superreact", "autoreact"],
             "Tools": ["ping", "bold", "italic", "upper", "lower", "reverse", "flip", "echo", "length", "time", "history", "badges", "backup"],
             "Hosting": ["host", "listhosted", "listallhosted", "clearhost", "clearallhosted", "hoston", "hostoff", "hostblacklist"],
             "Boost": ["nitro", "giveaway", "boost"],
@@ -9401,247 +9353,6 @@ Example Usage:
                 msg = _vc_send(ctx, f"> **✗ VC Rejoin** :: {detail}")
         except Exception as e:
             msg = _vc_send(ctx, f"> **✗ VC Rejoin error**: {str(e)[:80]}")
-    @bot.command(name="quest", aliases=["questlist", "ql", "qstat"])
-    def quest_cmd(ctx, args):
-        if args and str(args[0]).lower() in {"debug", "dbg"}:
-            questdebug_cmd(ctx, list(args[1:]))
-            return
-
-        ok, detail = quest_system.fetch_quests()
-        s = quest_system.get_summary()
-        lines = ["Quest Manager"]
-        lines.append(f"Auto-complete :: {'Running' if s['running'] else 'Stopped'}")
-        lines.append(f"Total :: {s['total']}")
-        lines.append(f"Enrollable :: {len(s['enrollable'])}")
-        lines.append(f"In Progress :: {len(s['completeable'])}")
-        lines.append(f"Claimable  :: {len(s['claimable'])}")
-        lines.append(f"Completed  :: {len(s['completed'])}")
-        lines.append(f"Expired    :: {len(s['expired'])}")
-        if s["last_fetch"]:
-            lines.append(f"Last Fetch :: {time.strftime('%H:%M:%S', time.localtime(s['last_fetch']))}")
-        for q in s["completeable"]:
-            _, done, total = quest_system._get_progress(q)
-            pct = int(done / total * 100) if total else 0
-            worthy = " *" if quest_system._is_worthy(q) else ""
-            lines.append(f"> {quest_system._quest_name(q)}{worthy} [{quest_system._task_type(q)}] {done}/{total} ({pct}%)")
-        for q in s["enrollable"]:
-            lines.append(f"> {quest_system._quest_name(q)} [enrollable]")
-        for q in s["claimable"]:
-            lines.append(f"> {quest_system._quest_name(q)} [claim now]")
-        for q in s["completed"]:
-            lines.append(f"> {quest_system._quest_name(q)} [done]")
-        text = fmt.sections(lines[0], "\n".join(lines[1:]))
-        msg = ctx["api"].send_message(ctx["channel_id"], text)
-
-    @bot.command(name="questdebug", aliases=["qdebug", "qdbg"])
-    def questdebug_cmd(ctx, args):
-        import re
-
-        def _extract_quest_id(text: str) -> str:
-            raw = str(text or "").strip()
-            if not raw:
-                return ""
-            m = re.search(r"/quests/([A-Za-z0-9_-]+)", raw)
-            if m:
-                return m.group(1)
-            m = re.search(r"[?&](?:quest_id|id)=([A-Za-z0-9_-]+)", raw)
-            if m:
-                return m.group(1)
-            cleaned = raw.strip("<>()[]{} ")
-            if re.fullmatch(r"[A-Za-z0-9_-]{6,}", cleaned):
-                return cleaned
-            return ""
-
-        ok, detail = quest_system.fetch_quests()
-        if not ok and not quest_system.quests:
-            msg = ctx["api"].send_message(ctx["channel_id"], f"> **✗ Quest Debug** :: Fetch failed: {detail}")
-            return
-
-        quests = list(quest_system.quests.values())
-        req_ids = [_extract_quest_id(a) for a in (args or [])]
-        req_ids = [x for x in req_ids if x]
-        if req_ids:
-            wanted = set(req_ids)
-            quests = [q for q in quests if str(q.get("id", "")) in wanted]
-
-        if not quests:
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **Quest Debug** :: No matching quests.")
-            return
-
-        lines = [f"Quest Debug :: {len(quests)} quest(s)"]
-        for q in quests[:20]:
-            qid = str(q.get("id", "?"))
-            qname = quest_system._quest_name(q)
-            qtype = quest_system._task_type(q)
-            event_name, done, total = quest_system._get_progress(q)
-            worthy = "yes" if quest_system._is_worthy(q) else "no"
-            platforms = []
-            if hasattr(quest_system, "_task_platforms"):
-                try:
-                    platforms = sorted(list(quest_system._task_platforms(q)))
-                except Exception:
-                    platforms = []
-            plat_text = ",".join(platforms) if platforms else "auto"
-
-            state = "completed"
-            if quest_system._is_claimable(q):
-                state = "claimable"
-            elif quest_system._is_completeable(q):
-                state = "in-progress"
-            elif quest_system._is_enrollable(q):
-                state = "enrollable"
-
-            lines.append(f"ID: {qid}")
-            lines.append(f"Name: {qname[:80]}")
-            lines.append(f"Type: {qtype} | Event: {event_name} | Platform: {plat_text}")
-            lines.append(f"Progress: {done}/{total} | Worthy: {worthy} | State: {state}")
-            lines.append("-")
-
-        text = fmt.sections(lines[0], "\n".join(lines[1:]))
-        msg = ctx["api"].send_message(ctx["channel_id"], text)
-    @bot.command(name="questclaim", aliases=["qclaim", "qc"])
-    def questclaim_cmd(ctx, args):
-        quest_system.fetch_quests()
-        s = quest_system.get_summary()
-        claimable = s["claimable"]
-        if not claimable:
-            msg = ctx["api"].send_message(ctx["channel_id"], "> **Quest** :: No claimable quests.")
-            return
-
-        claimed = 0
-        failed = 0
-        for q in claimable:
-            if quest_system.claim(q):
-                claimed += 1
-            else:
-                failed += 1
-            time.sleep(0.6)
-
-        msg = ctx["api"].send_message(
-            ctx["channel_id"],
-            f"> **✓ Quest Claim** :: Claimed **{claimed}** · Failed: {failed}",
-        )
-    @bot.command(name="queststart", aliases=["qstart", "qs"])
-    def queststart_cmd(ctx, args):
-        ok_fetch, fetch_detail = quest_system.fetch_quests()
-        if not ok_fetch:
-            msg = ctx["api"].send_message(ctx["channel_id"], f"> **Quest** refresh failed: {fetch_detail}.")
-            return
-        ok, detail = quest_system.start()
-        if ok:
-            msg = ctx["api"].send_message(ctx["channel_id"], f"> **Quest enabled**. {detail}.")
-        else:
-            msg = ctx["api"].send_message(ctx["channel_id"], f"Quest error: {detail}.")
-    @bot.command(name="queststop", aliases=["qstop", "qx"])
-    def queststop_cmd(ctx, args):
-        ok, detail = quest_system.stop()
-        msg = ctx["api"].send_message(ctx["channel_id"], f"> **Quest disabled**. {detail}.")
-    @bot.command(name="questrefresh", aliases=["qr", "qrefresh"])
-    def questrefresh_cmd(ctx, args):
-        ok, detail = quest_system.fetch_quests()
-        status = "Refreshed" if ok else "Failed"
-        s = quest_system.get_summary()
-        msg = ctx["api"].send_message(
-            ctx["channel_id"],
-            f"> **{'✓' if ok else '✗'} Quest Refresh** :: {detail} · Total: {s['total']} · Enrollable: {len(s['enrollable'])} · Claimable: {len(s['claimable'])}",
-        )
-    @bot.command(name="questenroll", aliases=["qenroll", "qe"])
-    def questenroll_cmd(ctx, args):
-        import re
-
-        def _extract_quest_id(text: str) -> str:
-            raw = str(text or "").strip()
-            if not raw:
-                return ""
-            m = re.search(r"/quests/([A-Za-z0-9_-]+)", raw)
-            if m:
-                return m.group(1)
-            m = re.search(r"[?&](?:quest_id|id)=([A-Za-z0-9_-]+)", raw)
-            if m:
-                return m.group(1)
-            cleaned = raw.strip("<>()[]{} ")
-            if re.fullmatch(r"[A-Za-z0-9_-]{6,}", cleaned):
-                return cleaned
-            return ""
-
-        quest_system.fetch_quests()
-        s = quest_system.get_summary()
-        enrollable = s["enrollable"]
-        missing = []
-
-        requested_ids = [_extract_quest_id(a) for a in (args or [])]
-        requested_ids = [x for x in requested_ids if x]
-
-        if requested_ids:
-            selected = []
-            missing = []
-            for qid in requested_ids:
-                q = quest_system.quests.get(str(qid))
-                if q is None:
-                    missing.append(str(qid))
-                    continue
-                selected.append(q)
-            enrollable = selected
-
-        if not enrollable:
-            if requested_ids:
-                missing_note = f" · Missing: {', '.join(missing[:5])}" if missing else ""
-                msg = ctx["api"].send_message(ctx["channel_id"], f"> **Quest** :: No enrollable matching quests.{missing_note}")
-            else:
-                msg = ctx["api"].send_message(ctx["channel_id"], "> **Quest** :: No enrollable quests.")
-            return
-
-        enrolled = 0
-        failed = 0
-        for q in enrollable:
-            status = quest_system.enroll(q)
-            if status:
-                q["user_status"] = status
-                enrolled += 1
-            else:
-                failed += 1
-            time.sleep(0.8)
-
-        suffix = ""
-        if requested_ids and missing:
-            suffix = f" · Missing: {len(missing)}"
-
-        msg = ctx["api"].send_message(
-            ctx["channel_id"],
-            f"> **✓ Quest Enroll** :: Enrolled **{enrolled}** · Failed: {failed}{suffix}",
-        )
-    @bot.command(name="questautoclaimer", aliases=["quest-auto-claimer", "qac", "autoclaimer"])
-    def questautoclaimer_cmd(ctx, args):
-        sub = (args[0].lower() if args else "status")
-
-        if sub == "status":
-            quest_cmd(ctx, [])
-            return
-
-        if sub == "start":
-            queststart_cmd(ctx, [])
-            return
-
-        if sub == "stop":
-            queststop_cmd(ctx, [])
-            return
-
-        if sub == "refresh":
-            questrefresh_cmd(ctx, [])
-            return
-
-        if sub == "enroll":
-            questenroll_cmd(ctx, [])
-            return
-
-        if sub == "claim":
-            questclaim_cmd(ctx, [])
-            return
-
-        msg = ctx["api"].send_message(
-            ctx["channel_id"],
-            f"> **✗ Quest** :: Usage: `{bot.prefix}questautoclaimer <start|stop|status|refresh|enroll|claim>`",
-        )
     @bot.command(name="deco", aliases=["decoration", "profiledeco", "cleardeco", "removedeco"])
     def deco_cmd(ctx, args):
         import formatter as fmt

@@ -45,6 +45,7 @@
           <div class="form-card">
             <div class="eyebrow">Connection Payload</div>
             <form class="form" method="post" action="/connect-instance">
+              <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
               <div class="field">
                 <label for="token">Discord Token</label>
                 <input id="token" name="token" type="password" autocomplete="off" required />

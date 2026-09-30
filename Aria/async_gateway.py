@@ -62,7 +62,7 @@ class AsyncDiscordGateway:
                             await self._handle_message(message)
                 except websockets.exceptions.ConnectionClosed as e:
                     print("🔌 Gateway connection closed")
-                    if self.on_close:
+                    if self.connected and self.on_close:
                         try:
                             self.on_close(int(getattr(e, "code", 1000) or 1000), str(getattr(e, "reason", "")))
                         except Exception:
@@ -160,7 +160,13 @@ class AsyncDiscordGateway:
 
             elif op == 7:  # Reconnect
                 print("🔄 Gateway requested reconnect")
-                return  # This will close the connection and trigger reconnect
+                self.connected = False
+                websocket = self.ws
+                if websocket is not None:
+                    await websocket.close()
+                if self.on_close:
+                    self.on_close(4000, "Gateway requested reconnect")
+                return
 
         except json.JSONDecodeError:
             print(f"❌ Failed to parse message: {message}")

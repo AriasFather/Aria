@@ -4,6 +4,7 @@ import threading
 import unittest
 import asyncio
 import json
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -90,6 +91,29 @@ class GatewayLifecycleTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(calls), 1)
 
+    def test_stop_closes_async_bridge_once(self):
+        class Bridge:
+            def __init__(self):
+                self.stop_calls = 0
+                self.close_calls = 0
+
+            def stop(self):
+                self.stop_calls += 1
+
+            def close(self):
+                self.close_calls += 1
+
+        bot = make_bot()
+        bridge = Bridge()
+        bot.use_async_gateway = True
+        bot.gateway_bridge = bridge
+        bot.ws = bridge
+
+        bot.stop()
+
+        self.assertEqual(bridge.stop_calls, 1)
+        self.assertEqual(bridge.close_calls, 0)
+
     def test_async_identify_uses_vr_profile(self):
         class Socket:
             def __init__(self):
@@ -105,6 +129,44 @@ class GatewayLifecycleTests(unittest.TestCase):
         payload = gateway.ws.payload
         self.assertEqual(payload["d"]["properties"], CLIENT_PROFILES["vr"])
         self.assertEqual(payload["d"]["token"], "test-token")
+
+    def test_async_bridge_routes_dispatch_through_one_bot_callback(self):
+        bot = make_bot()
+        bot.config = {"gateway_compress": False}
+        bot._client_type = "web"
+        bot.token = "test-token"
+        bot.can_resume = False
+        bot.session_id = None
+        bot.gateway_bridge = None
+        bot._async_gateway_bridge_active = False
+
+        with patch("gateway_bridge.GatewayBridge") as bridge_type:
+            bridge = bridge_type.return_value
+            bot._connect_gateway_bridge()
+
+        bridge.on_ready.assert_not_called()
+        bridge.on_message.assert_not_called()
+        bridge.on_payload.assert_called_once_with(bot._on_bridge_payload)
+
+    def test_async_gateway_reconnect_opcode_closes_socket_and_notifies_owner(self):
+        class Socket:
+            def __init__(self):
+                self.closed = False
+
+            async def close(self):
+                self.closed = True
+
+        gateway = AsyncDiscordGateway("test-token", compress=False)
+        gateway.ws = Socket()
+        gateway.connected = True
+        close_events = []
+        gateway.on_close = lambda code, reason: close_events.append((code, reason))
+
+        asyncio.run(gateway._handle_message(json.dumps({"op": 7, "d": None})))
+
+        self.assertTrue(gateway.ws.closed)
+        self.assertFalse(gateway.connected)
+        self.assertEqual(close_events, [(4000, "Gateway requested reconnect")])
 
     def test_selecting_current_vr_profile_is_a_noop(self):
         bot = object.__new__(DiscordBot)

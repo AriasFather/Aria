@@ -94,7 +94,6 @@ def test_async_gateway_integration():
     except Exception as e:
         print(f"❌ Failed to initialize GatewayBridge: {e}")
         return False
-
     print()
 
     # Test connection (brief) - DISABLED to prevent duplicate async gateway bridge
@@ -124,7 +123,6 @@ def test_async_gateway_integration():
     #
     # except Exception as e:
     #     print(f"❌ Connection test failed: {e}")
-        return False
 
     print()
     print("🎉 All tests passed! Async gateway integration is working.")
