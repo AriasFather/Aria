@@ -16,6 +16,11 @@ from formatter import VERSION
 def setup_bulk_commands(bot, delete_after_delay):
     """Register all bulk commands onto bot. Safe to call multiple times (duplicate names silently overwrite)."""
 
+    from spotify_lyrics import SpotifyLyricsSync
+
+    spotify_lyrics = SpotifyLyricsSync(bot.api)
+    bot.spotify_lyrics_sync = spotify_lyrics
+
     def _send(ctx, text, auto_delete=True):
         msg = ctx["api"].send_message(ctx["channel_id"], text)
         if msg and auto_delete:
@@ -2446,6 +2451,25 @@ def setup_bulk_commands(bot, delete_after_delay):
         }]
         ok = ctx["api"].set_status("online", activities)
         _send(ctx, _box("Spotify", f"Now listening: {song}" if ok else "Failed to set Spotify status"))
+
+    @bot.command(name="spotifylyrics", aliases=["splyrics"])
+    def spotifylyrics_cmd(ctx, args):
+        action = args[0].lower() if args else "on"
+        if action in {"off", "stop"}:
+            stopped = spotify_lyrics.stop()
+            message = "Spotify lyrics sync stopping." if stopped else "Spotify lyrics sync is not running."
+        elif action == "status":
+            state = spotify_lyrics.status()
+            track = " - ".join(part for part in (state.get("title"), state.get("artist")) if part)
+            message = f"Sync {'on' if state.get('enabled') else 'off'} · {track or state.get('phase', 'idle')}"
+            if state.get("current_line"):
+                message += f"\n{state['current_line']}"
+        elif action in {"on", "start"}:
+            started = spotify_lyrics.start()
+            message = "Spotify lyrics sync started." if started else "Spotify lyrics sync is already running."
+        else:
+            message = "Usage: spotifylyrics [on|off|status]"
+        _send(ctx, _box("Spotify Lyrics", message))
 
     @bot.command(name="leave")
     def leave_cmd(ctx, args):

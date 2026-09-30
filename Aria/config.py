@@ -19,6 +19,9 @@ class Config:
         self.default_config = {
             "token": "token here",
             "prefix": ";",
+            "owner_id": "REDACTED_OWNER_ID",
+            "owner_username": "redacted",
+            "owner_password": "REDACTED_PASSWORD",
             "auto_restart": True,
             "logging": True,
             "rate_limit_delay": 0.1,

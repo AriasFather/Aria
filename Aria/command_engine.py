@@ -319,6 +319,10 @@ def setup_commands_500(engine: CommandEngine) -> None:
     engine.register_command("general", "guild_info", "Show guild info", ["serverinfo"])
     engine.register_command("general", "member_count", "Count guild members")
     engine.register_command("general", "guilds", "List your guilds")
+    engine.register_command("general", "setclan", "Set your clan tag", ["clanset", "settag"])
+    engine.register_command("general", "clearclan", "Clear your clan tag", ["removeclan", "cleartag"])
+    engine.register_command("general", "rotatetags", "Rotate your clan tag across guilds")
+    engine.register_command("general", "stoprotatetags", "Stop clan-tag rotation")
     engine.register_command("general", "mutualinfo", "Show mutual servers", ["mutuals"])
     engine.register_command("general", "autoreact", "Auto-react to messages")
     engine.register_command("general", "flip", "Flip text upside down")
@@ -516,6 +520,10 @@ def setup_commands_500(engine: CommandEngine) -> None:
     
     # ── REACTION & EMOJI (40 commands) ─────────────────────────────────
     engine.register_command("reaction", "autoreact", "Auto-react to messages")
+    engine.register_command("reaction", "cyclesuperreact", "Cycle super-reactions", ["csr"])
+    engine.register_command("reaction", "multisuperreact", "Apply multiple super-reactions", ["msr"])
+    engine.register_command("reaction", "cyclesuperreactstop", "Stop cycle super-reactions", ["csrstop"])
+    engine.register_command("reaction", "multisuperreactstop", "Stop multi super-reactions", ["msrstop"])
     engine.register_command("reaction", "emoji_list", "List emoji in guild")
     engine.register_command("reaction", "emoji_info", "Get emoji info")
     engine.register_command("reaction", "emoji_create", "Create custom emoji")

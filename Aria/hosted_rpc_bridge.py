@@ -26,8 +26,23 @@ def _rotation_running(bot: Any) -> bool:
     return bool(state.get("running")) if isinstance(state, dict) else False
 
 
+def _spotify_lyrics_status(bot: Any) -> dict[str, Any]:
+    manager = getattr(bot, "spotify_lyrics_sync", None)
+    get_status = getattr(manager, "status", None)
+    if callable(get_status):
+        try:
+            state = get_status()
+            return state if isinstance(state, dict) else {}
+        except Exception:
+            pass
+    return {"available": False, "enabled": False, "running": False, "phase": "unavailable"}
+
+
 def _write_status(bot: Any, control_dir: str) -> dict[str, Any]:
     activity = getattr(bot, "activity", None)
+    activities = getattr(bot, "activities", None)
+    if not isinstance(activities, list):
+        activities = [activity] if isinstance(activity, dict) else []
     identified = bool(getattr(bot, "identified", False))
     connection_active = bool(getattr(bot, "connection_active", False))
     diagnostics = {}
@@ -37,8 +52,9 @@ def _write_status(bot: Any, control_dir: str) -> dict[str, Any]:
     except Exception:
         diagnostics = {}
     status = {
-        "active": isinstance(activity, dict),
+        "active": bool(activities),
         "activity": activity if isinstance(activity, dict) else None,
+        "activities": activities,
         "connected": bool(connection_active and identified),
         "identified": identified,
         "username": str(getattr(bot, "username", "") or ""),
@@ -48,6 +64,7 @@ def _write_status(bot: Any, control_dir: str) -> dict[str, Any]:
         "reconnect_attempts": int(diagnostics.get("consecutive_failures", getattr(bot, "_consecutive_failures", 0)) or 0),
         "connection_error": str(getattr(bot, "last_connection_error", "") or "")[:240],
         "rotation_running": _rotation_running(bot),
+        "spotify_lyrics": _spotify_lyrics_status(bot),
         "updated_at": int(time.time()),
     }
     _write_json_atomic(os.path.join(control_dir, "rpc_status.json"), status)
@@ -59,8 +76,11 @@ def _apply_request(bot: Any, request: dict[str, Any]) -> dict[str, Any]:
     try:
         if action in {"set", "stop"}:
             activity = request.get("activity") if action == "set" else None
-            if action == "set" and not isinstance(activity, dict):
-                return {"ok": False, "error": "activity must be an object"}
+            if action == "set" and not (
+                isinstance(activity, dict)
+                or isinstance(activity, list) and 1 <= len(activity) <= 5 and all(isinstance(item, dict) for item in activity)
+            ):
+                return {"ok": False, "error": "activity must be an object or a list of up to five activities"}
             apply_activity = getattr(bot, "_rpc_apply_activity", None)
             if callable(apply_activity):
                 result = apply_activity(bot, activity)
@@ -78,6 +98,15 @@ def _apply_request(bot: Any, request: dict[str, Any]) -> dict[str, Any]:
             result = stop_rotation(bot, resume_keepalive=True)
             message = str(result[1]) if isinstance(result, tuple) and len(result) > 1 else "Rotation stopped"
             return {"ok": True, "message": message}
+        elif action in {"spotify_start", "spotify_stop"}:
+            lyrics = getattr(bot, "spotify_lyrics_sync", None)
+            if lyrics is None:
+                return {"ok": False, "error": "Spotify lyrics controls are unavailable"}
+            if action == "spotify_start":
+                lyrics.start()
+            else:
+                lyrics.stop()
+            return {"ok": True, "spotify_lyrics": lyrics.status()}
         else:
             return {"ok": False, "error": "Unsupported hosted RPC action"}
 
@@ -125,7 +154,12 @@ def start_hosted_rpc_worker(bot: Any, control_dir: str) -> threading.Event:
                 else:
                     response = _apply_request(bot, request)
                 status = _write_status(bot, control_dir)
-                response.update({"activity": status["activity"], "rotation_running": status["rotation_running"]})
+                response.update({
+                    "activity": status["activity"],
+                    "activities": status["activities"],
+                    "rotation_running": status["rotation_running"],
+                    "spotify_lyrics": status["spotify_lyrics"],
+                })
                 _write_json_atomic(os.path.join(response_dir, f"{request_id}.json"), response)
 
             status_key = (
@@ -133,6 +167,7 @@ def start_hosted_rpc_worker(bot: Any, control_dir: str) -> threading.Event:
                 bool(getattr(bot, "identified", False)),
                 bool(isinstance(getattr(bot, "activity", None), dict)),
                 _rotation_running(bot),
+                tuple(sorted(_spotify_lyrics_status(bot).items())),
             )
             now = time.monotonic()
             if status_key != last_status or now - last_status_at >= 1:

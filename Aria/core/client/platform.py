@@ -225,6 +225,12 @@ def build_identify_payload(token: str, client_type: str, status: str = "online",
     properties = dict(CLIENT_PROFILES.get(resolved_client, CLIENT_PROFILES["web"]))
     if resolved_client == "mobile":
         properties["device_vendor_id"] = str(uuid.uuid4())
+    if isinstance(activity, dict):
+        activities = [activity]
+    elif isinstance(activity, (list, tuple)):
+        activities = [item for item in activity if isinstance(item, dict)][:5]
+    else:
+        activities = []
 
     return {
         "op": GatewayOpcodes.Identify,
@@ -234,7 +240,7 @@ def build_identify_payload(token: str, client_type: str, status: str = "online",
             "presence": {
                 "status": resolved_status,
                 "since": 0,
-                "activities": [activity] if activity else [],
+                "activities": activities,
                 "afk": False,
             },
             "compress": compress,

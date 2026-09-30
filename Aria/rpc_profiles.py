@@ -26,11 +26,13 @@ class RPCProfileStore:
             with open(self.path, "r", encoding="utf-8") as state_file:
                 state = json.load(state_file)
         except (OSError, json.JSONDecodeError):
-            return {"presets": {}, "rotation": None}
+            return {"presets": {}, "rotation": None, "stack": []}
         if not isinstance(state, dict):
-            return {"presets": {}, "rotation": None}
+            return {"presets": {}, "rotation": None, "stack": []}
         presets = state.get("presets")
         state["presets"] = presets if isinstance(presets, dict) else {}
+        stack = state.get("stack")
+        state["stack"] = stack if isinstance(stack, list) else []
         return state
 
     def _write(self, state: dict) -> None:
@@ -57,9 +59,12 @@ class RPCProfileStore:
         return normalized
 
     @staticmethod
-    def _normalize_activity(activity: dict) -> dict:
-        if not isinstance(activity, dict) or not activity:
-            raise ValueError("An RPC activity dictionary is required")
+    def _normalize_activity(activity):
+        if isinstance(activity, list):
+            if not activity or len(activity) > 5 or any(not isinstance(item, dict) or not item for item in activity):
+                raise ValueError("RPC activity bundles must contain one to five activity objects")
+        elif not isinstance(activity, dict) or not activity:
+            raise ValueError("An RPC activity dictionary or activity bundle is required")
         try:
             serialized = json.dumps(activity, ensure_ascii=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
@@ -74,14 +79,38 @@ class RPCProfileStore:
             return {
                 name: dict(activity)
                 for name, activity in presets.items()
-                if isinstance(name, str) and isinstance(activity, dict)
+                if isinstance(name, str) and isinstance(activity, (dict, list))
             }
 
     def get_preset(self, name: str) -> Optional[dict]:
         normalized = self._normalize_name(name)
         with self._lock:
             activity = self._read()["presets"].get(normalized)
-            return dict(activity) if isinstance(activity, dict) else None
+            if isinstance(activity, dict):
+                return dict(activity)
+            if isinstance(activity, list):
+                return [dict(item) for item in activity if isinstance(item, dict)]
+            return None
+
+    def get_stack(self) -> List[dict]:
+        with self._lock:
+            return [dict(item) for item in self._read()["stack"] if isinstance(item, dict)]
+
+    def save_stack(self, activities: List[dict]) -> List[dict]:
+        normalized = self._normalize_activity(activities)
+        if not isinstance(normalized, list):
+            raise ValueError("RPC stack must be a list of activities")
+        with self._lock:
+            state = self._read()
+            state["stack"] = normalized
+            self._write(state)
+        return [dict(item) for item in normalized]
+
+    def clear_stack(self) -> None:
+        with self._lock:
+            state = self._read()
+            state["stack"] = []
+            self._write(state)
 
     def save_preset(self, name: str, activity: dict) -> None:
         normalized = self._normalize_name(name)

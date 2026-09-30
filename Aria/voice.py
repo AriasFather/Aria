@@ -40,6 +40,7 @@ class VoiceClient:
         self.voice_thread: Optional[threading.Thread] = None
         self.voice_loop: Optional[asyncio.AbstractEventLoop] = None
         self.running = False
+        self.gateway_joined = False
 
         self.guild_id: Optional[str] = None
         self.channel_id: Optional[str] = None
@@ -77,9 +78,28 @@ class VoiceClient:
     
     # ── called by bot.on_message to deliver gateway voice events ────────────
 
+    def _matches_current_voice_session(self, data: dict) -> bool:
+        """Accept updates that match the active user or the channel currently being joined."""
+        if not isinstance(data, dict):
+            return False
+
+        user_id = data.get("user_id")
+        if user_id is not None:
+            return bool(self.user_id and str(user_id) == str(self.user_id))
+
+        channel_id = data.get("channel_id")
+        if self.channel_id and channel_id is not None and str(channel_id) == str(self.channel_id):
+            return True
+
+        guild_id = data.get("guild_id")
+        if self.guild_id and guild_id is not None and str(guild_id) == str(self.guild_id):
+            return True
+
+        return False
+
     def on_voice_state_update(self, data: dict):
         """Forward VOICE_STATE_UPDATE from the main gateway."""
-        if str(data.get("user_id")) != self.user_id:
+        if not self._matches_current_voice_session(data):
             return
         self.session_id = data.get("session_id")
         if self.session_id:
@@ -87,9 +107,13 @@ class VoiceClient:
 
     def on_voice_server_update(self, data: dict):
         """Forward VOICE_SERVER_UPDATE from the main gateway."""
-        # For guild voice, filter by guild_id; for DM calls guild_id is None
-        if self.guild_id and data.get("guild_id") and str(data.get("guild_id")) != str(self.guild_id):
+        if not isinstance(data, dict):
             return
+        guild_matches = self.guild_id and str(data.get("guild_id") or "") == str(self.guild_id)
+        channel_matches = self.channel_id and str(data.get("channel_id") or "") == str(self.channel_id)
+        if not (guild_matches or channel_matches):
+            return
+
         endpoint = (data.get("endpoint") or "").replace(":443", "")
         token = data.get("token")
         if endpoint and token:
@@ -133,18 +157,28 @@ class VoiceClient:
         })
         try:
             self.bot_ws.send(payload)
+            self.gateway_joined = True
         except Exception as e:
             logger.error("[Voice] Failed to send op4: %s", e)
             return False
 
         # Wait for session_id and endpoint from gateway events (up to 10 s each)
-        if not self._session_event.wait(timeout=10):
+        if not self._session_event.wait(timeout=10) or not self.gateway_joined:
+            if not self.gateway_joined:
+                self._ws_error = "Voice join was cancelled"
+                return False
             self._ws_error = "Timeout waiting for VOICE_STATE_UPDATE"
             logger.warning("[Voice] Timeout waiting for session_id (VOICE_STATE_UPDATE)")
             return False
-        if not self._server_event.wait(timeout=10):
+        if not self._server_event.wait(timeout=10) or not self.gateway_joined:
+            if not self.gateway_joined:
+                self._ws_error = "Voice join was cancelled"
+                return False
             self._ws_error = "Timeout waiting for VOICE_SERVER_UPDATE"
             logger.warning("[Voice] Timeout waiting for voice server (VOICE_SERVER_UPDATE)")
+            return False
+        if not self.gateway_joined:
+            self._ws_error = "Voice join was cancelled"
             return False
 
         # Spawn voice WS thread
@@ -174,6 +208,10 @@ class VoiceClient:
             self.bot_ws.send(payload)
         except Exception:
             pass
+        finally:
+            self.gateway_joined = False
+            self._session_event.set()
+            self._server_event.set()
 
         # Close voice WS from within its own loop
         if self.voice_loop and not self.voice_loop.is_closed() and self.voice_ws:
@@ -370,13 +408,7 @@ class SimpleVoice:
         self.last_error: str = ""
 
     def _is_client_alive(self, client: Optional[VoiceClient]) -> bool:
-        if client is None:
-            return False
-        if not client.running:
-            return False
-        if not client.voice_thread:
-            return False
-        return client.voice_thread.is_alive()
+        return bool(client and client.gateway_joined)
 
     def _cleanup_dead_connections(self) -> None:
         stale = []
@@ -471,12 +503,14 @@ class SimpleVoice:
             self.bot._voice_client = client
 
         key = f"channel_{channel_id}"
+        # Keep the gateway membership addressable while connect waits for voice events.
+        self.active_connections[key] = client
         success = client.connect(channel_id, guild_id, is_dm)
-        if success:
-            self.active_connections[key] = client
-        else:
-            self.last_error = "Voice gateway handshake failed"
-            if self.bot is not None and getattr(self.bot, "_voice_client", None) is client:
+        if not success:
+            self.last_error = client._ws_error or "Voice gateway handshake failed"
+            if not client.gateway_joined:
+                self.active_connections.pop(key, None)
+            if not client.gateway_joined and self.bot is not None and getattr(self.bot, "_voice_client", None) is client:
                 self.bot._voice_client = None
         return success
 

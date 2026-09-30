@@ -25,6 +25,15 @@ import random
 import json
 from urllib.parse import quote as _url_quote
 from rpc_profiles import RPCProfileStore
+from rpc_activity import (
+    RPC_ACTIVITY_TYPES,
+    RPC_TYPE_ALIASES,
+    RPC_TYPE_GROUPS,
+    RPC_TYPES,
+    build_rpc_activity,
+    parse_rpc_key_values,
+    split_rotatable_activity,
+)
 
 BOT_START_TIME = time.time()
 
@@ -275,6 +284,69 @@ def upload_image_to_discord(api, image_url, application_id=None):
         print(f"[upload_image] error: {e}")
         return None
 
+def diagnose_rpc_image_upload_support(bot=None):
+    """Report whether the active API/spoofer stack has the internals Discord RPC image upload needs."""
+    print("=" * 56)
+    print(" Aria RPC image-upload diagnostic")
+    print("=" * 56)
+    print("python:", sys.executable)
+
+    ok = True
+    api = getattr(bot, "api", None) if bot is not None else None
+
+    try:
+        import header_spoofer
+        print("header_spoofer:      OK")
+    except Exception as e:
+        ok = False
+        print("header_spoofer:      MISSING ->", repr(e))
+
+    try:
+        import requests
+        print("requests:            OK")
+    except Exception as e:
+        ok = False
+        print("requests:            MISSING ->", repr(e))
+
+    spoofer_obj = getattr(api, "header_spoofer", None)
+    if spoofer_obj is None:
+        try:
+            from header_spoofer import HeaderSpoofer
+            spoofer_obj = HeaderSpoofer()
+            print("fallback spoofer:    CREATED")
+        except Exception as e:
+            ok = False
+            print("fallback spoofer:    FAILED ->", repr(e))
+
+    if spoofer_obj is not None:
+        checks = {
+            "api.header_spoofer": True,
+            "header_spoofer.get_protected_headers": callable(getattr(spoofer_obj, "get_protected_headers", None)),
+            "header_spoofer.profile": hasattr(spoofer_obj, "profile"),
+            "header_spoofer.session": hasattr(spoofer_obj, "session"),
+            "header_spoofer.build_number": hasattr(spoofer_obj, "build_number"),
+            "profile.user_agent": hasattr(getattr(spoofer_obj, "profile", None), "user_agent"),
+            "profile.browser_version": hasattr(getattr(spoofer_obj, "profile", None), "browser_version"),
+            "profile.locale": hasattr(getattr(spoofer_obj, "profile", None), "locale"),
+            "profile.os": hasattr(getattr(spoofer_obj, "profile", None), "os"),
+            "profile.browser": hasattr(getattr(spoofer_obj, "profile", None), "browser"),
+        }
+        for key, value in checks.items():
+            print(f"{key:24s}: {'OK' if value else 'MISSING'}")
+            ok = ok and bool(value)
+    else:
+        print("api.header_spoofer:  MISSING")
+        ok = False
+
+    print("-" * 56)
+    if ok:
+        print("RESULT: this build has the RPC image-upload internals it needs.")
+    else:
+        print("RESULT: this build is missing upload-support internals.")
+        print("Fallback path: use bot.api.header_spoofer.get_protected_headers(token) and keep the profile/session alive.")
+    return ok
+
+
 def upload_n_get_asset_key(bot, image_url, application_id=None):
     """Return a Discord media-proxy key for any image URL.
 
@@ -453,94 +525,6 @@ def send_soundcloud_activity(bot, track, artist, elapsed_minutes=0.0, total_minu
 
 
 REAL_RPC_APPS = {
-    "youtube_music": {
-        "name": "YouTube Music",
-        "type": int(ActivityType.Listening),
-        "application_id": "880218394199220334",
-        "asset": "youtube",
-        "default_button": "Listen",
-        "default_url": "https://music.youtube.com",
-    },
-    "applemusic": {
-        "name": "Apple Music",
-        "type": int(ActivityType.Listening),
-        "application_id": "886578863147192381",
-        "asset": "music",
-        "default_button": "Listen",
-        "default_url": "https://music.apple.com",
-    },
-    "deezer": {
-        "name": "Deezer",
-        "type": int(ActivityType.Listening),
-        "application_id": "356268235697553409",
-        "asset": "music",
-        "default_button": "Listen",
-        "default_url": "https://www.deezer.com",
-    },
-    "tidal": {
-        "name": "TIDAL",
-        "type": int(ActivityType.Listening),
-        "application_id": "967730792256327751",
-        "asset": "music",
-        "default_button": "Listen",
-        "default_url": "https://tidal.com",
-    },
-    "twitch": {
-        "name": "Twitch",
-        "type": int(ActivityType.Streaming),
-        "application_id": "432980957394370572",
-        "asset": "twitch",
-        "default_button": "Watch",
-        "default_url": "https://www.twitch.tv",
-    },
-    "kick": {
-        "name": "Kick",
-        "type": int(ActivityType.Streaming),
-        "application_id": "1108574023776385135",
-        "asset": "stream",
-        "default_button": "Watch",
-        "default_url": "https://kick.com",
-    },
-    "netflix": {
-        "name": "Netflix",
-        "type": int(ActivityType.Watching),
-        "application_id": "523416993301913601",
-        "asset": "movie",
-        "default_button": "Watch",
-        "default_url": "https://www.netflix.com",
-    },
-    "disneyplus": {
-        "name": "Disney+",
-        "type": int(ActivityType.Watching),
-        "application_id": "911240629547008050",
-        "asset": "movie",
-        "default_button": "Watch",
-        "default_url": "https://www.disneyplus.com",
-    },
-    "primevideo": {
-        "name": "Prime Video",
-        "type": int(ActivityType.Watching),
-        "application_id": "1052207893980653608",
-        "asset": "movie",
-        "default_button": "Watch",
-        "default_url": "https://www.primevideo.com",
-    },
-    "plex": {
-        "name": "Plex",
-        "type": int(ActivityType.Watching),
-        "application_id": "435674941344555008",
-        "asset": "movie",
-        "default_button": "Open",
-        "default_url": "https://app.plex.tv",
-    },
-    "jellyfin": {
-        "name": "Jellyfin",
-        "type": int(ActivityType.Watching),
-        "application_id": "1011297904504971264",
-        "asset": "movie",
-        "default_button": "Open",
-        "default_url": "https://jellyfin.org",
-    },
     "youtube": {
         "name": "YouTube",
         "type": int(ActivityType.Watching),
@@ -604,29 +588,90 @@ REAL_RPC_APPS = {
         "asset": "browser",
         "default_button": "Open",
         "default_url": "https://www.google.com",
-    }
+    },
+    "metaquest": {
+        "name": "Meta Quest",
+        "type": int(ActivityType.Playing),
+        "application_id": "1418873561485504553",
+        "asset": "https://upload.wikimedia.org/wikipedia/commons/a/a9/Meta-Logo.png",
+        "default_button": "Play",
+        "default_url": "https://www.meta.com/quest",
+    },
+    "vrchat": {
+        "name": "VRChat",
+        "type": int(ActivityType.Playing),
+        "application_id": "1498387526501535835",
+        "asset": "https://upload.wikimedia.org/wikipedia/commons/0/0d/VRChat_Logo.svg",
+        "default_button": "Join",
+        "default_url": "https://hello.vrchat.com",
+    },
+    "custom_status": {
+        "name": "Custom Status",
+        "type": int(ActivityType.Custom),
+        "application_id": "367827983903490050",
+        "asset": "game",
+        "default_button": "Open",
+        "default_url": "https://discord.com",
+    },
+    "custom": {
+        "name": "Custom",
+        "type": int(ActivityType.Custom),
+        "application_id": "367827983903490050",
+        "asset": "game",
+        "default_button": "Open",
+        "default_url": "https://discord.com",
+    },
+    "clear": {
+        "name": "Clear",
+        "type": int(ActivityType.Playing),
+        "application_id": "367827983903490050",
+        "asset": "game",
+        "default_button": "",
+        "default_url": "",
+    },
 }
 
 REAL_RPC_ALIASES = {
-    "ytmusic": "youtube_music",
-    "youtubemusic": "youtube_music",
-    "apple_music": "applemusic",
-    "disney+": "disneyplus",
-    "disney_plus": "disneyplus",
-    "prime": "primevideo",
-    "prime_video": "primevideo",
-    "amazonprime": "primevideo",
-    "amazon_prime": "primevideo",
-    "chrome": "browser",
-    "web": "browser",
+    **RPC_TYPE_ALIASES,
+    "customstatus": "custom_status",
+    "custom_status": "custom_status",
     "metaquest": "metaquest",
     "quest": "metaquest",
     "quest3": "metaquest",
     "oculus": "metaquest",
     "vr": "metaquest",
+    "vrchat": "vrchat",
+    "clear": "clear",
 }
 
 
+def _build_rpc_command_activity(bot, rpc_type, values):
+    values = dict(values or {})
+    image_url = next(
+        (values.get(key) for key in ("large_image", "image_url", "image", "img", "imglink", "asset") if values.get(key)),
+        None,
+    )
+    if image_url:
+        values.setdefault("large_image", image_url)
+    provider_configs = {
+        key: {
+            "name": config.get("name"),
+            "type": config.get("type", 0),
+            "application_id": config.get("application_id"),
+            "asset": config.get("asset"),
+            "default_button": config.get("default_button"),
+            "default_url": config.get("default_url"),
+        }
+        for key, config in REAL_RPC_APPS.items()
+    }
+    return build_rpc_activity(
+        REAL_RPC_ALIASES.get(str(rpc_type or "").lower(), str(rpc_type or "").lower()),
+        values,
+        resolve_asset=lambda url, app_id=None: upload_n_get_asset_key(
+            bot, url, application_id=app_id or values.get("app_id")
+        ),
+        provider_configs=provider_configs,
+    )
 def send_real_app_activity(
     bot,
     app_key,
@@ -637,6 +682,7 @@ def send_real_app_activity(
     image_url=None,
     button_label=None,
     button_url=None,
+    stream_url=None,
 ):
     cfg = REAL_RPC_APPS.get(app_key)
     if not cfg:
@@ -658,8 +704,12 @@ def send_real_app_activity(
         total_ms = int(float(max(0.1, total_minutes)) * 60 * 1000)
         activity["timestamps"] = {"start": start_ms, "end": start_ms + total_ms}
 
+    if app_key == "clear":
+        bot.set_activity(None)
+        return
+
     if int(cfg.get("type", 0)) == 1:
-        activity["url"] = button_url or cfg.get("default_url") or "https://www.twitch.tv"
+        activity["url"] = stream_url or cfg.get("default_url") or "https://www.twitch.tv"
 
     # Handle image uploading and asset key generation
     asset_key = None
@@ -693,7 +743,7 @@ def send_crunchyroll_activity(bot, name, episode_title, elapsed_minutes, total_m
     end_ms = start_ms + int(total * 60 * 1000)
 
     # Use real Crunchyroll app ID and asset if possible
-    CRUNCHYROLL_APP_ID = "1000782763855949914"  # Real Crunchyroll app ID (as of 2024)
+    CRUNCHYROLL_APP_ID = "981509069309354054"  # Real Crunchyroll app ID (as of 2024)
     activity = {
         "type": 3,
         "name": "Crunchyroll",
@@ -759,11 +809,11 @@ def send_listening_activity(bot, name, button_label=None, button_url=None, image
 
     bot.set_activity(activity)
 
-def send_streaming_activity(bot, name, button_label=None, button_url=None, image_url=None, state=None, details=None):
+def send_streaming_activity(bot, name, button_label=None, button_url=None, image_url=None, state=None, details=None, stream_url=None):
     activity = {
         "type": 1,
-        "name": "Streaming",
-        "url": "https://twitch.tv/misconsiderations",
+        "name": name,
+        "url": stream_url or "https://www.twitch.tv",
         "application_id": "111299001912",
         "details": details if details else name,
     }
@@ -939,11 +989,16 @@ def _save_auto_delete_state(bot):
 
 
 def _save_rpc_state(bot, mode=None):
-    if not isinstance(getattr(bot, "activity", None), dict):
+    activities = getattr(bot, "activities", None)
+    if not isinstance(activities, list) or not activities:
+        activity = getattr(bot, "activity", None)
+        activities = [activity] if isinstance(activity, dict) else []
+    if not activities:
         return False
     state = _load_runtime_state()
     state["rpc"] = {
-        "activity": bot.activity,
+        "activity": activities[0],
+        "activities": activities,
         "mode": str(mode or RPC_KEEPALIVE.get("mode") or "custom"),
         "saved_at": int(time.time()),
     }
@@ -987,13 +1042,23 @@ def _restore_runtime_state(bot):
             pass
 
     rpc_state = state.get("rpc") or {}
-    activity = rpc_state.get("activity") if isinstance(rpc_state, dict) else None
-    if isinstance(activity, dict):
-        bot.activity = activity
+    activities = rpc_state.get("activities") if isinstance(rpc_state, dict) else None
+    if not isinstance(activities, list):
+        activity = rpc_state.get("activity") if isinstance(rpc_state, dict) else None
+        activities = [activity] if isinstance(activity, dict) else []
+    if activities:
+        set_activities = getattr(bot, "set_activities", None)
+        if callable(set_activities):
+            set_activities(activities)
+        else:
+            bot.set_activity(activities[0])
         bot.activity_persist = True
 
         def _refresh_saved_rpc():
-            if isinstance(bot.activity, dict):
+            current = getattr(bot, "activities", None)
+            if isinstance(current, list) and current:
+                bot.set_activities(current)
+            elif isinstance(getattr(bot, "activity", None), dict):
                 bot.set_activity(bot.activity)
 
         saved_mode = str(rpc_state.get("mode") or "saved")
@@ -1025,6 +1090,8 @@ def configure_rpc_keepalive(bot, mode, refresh_fn=None, interval=120):
                 fn = RPC_KEEPALIVE.get("refresh_fn")
                 if callable(fn):
                     fn()
+                elif isinstance(getattr(bot, "activities", None), list) and bot.activities:
+                    bot.set_activities(bot.activities)
                 elif bot.activity:
                     bot.set_activity(bot.activity)
                 RPC_KEEPALIVE["last_refresh"] = int(time.time())
@@ -2034,6 +2101,18 @@ def main():
         setup_bulk_commands(bot, delete_after_delay)
     except Exception as e:
         print(f"[bulk_commands] failed: {e}")
+
+    try:
+        from guild_tools import setup_guild_commands
+        setup_guild_commands(bot, delete_after_delay)
+    except Exception as e:
+        print(f"[guild_tools] failed: {e}")
+
+    try:
+        from superreact_commands import setup_superreact_commands
+        setup_superreact_commands(bot)
+    except Exception as e:
+        print(f"[superreact_commands] failed: {e}")
 
     # Initialize friend scraper
     from friend_scraper import EnhancedFriendScraper
@@ -4094,38 +4173,77 @@ Example Usage:
             import formatter as fmt
             p = bot.prefix
             cmds = [
-                (f"{p}rpc spotify", 'song=<name> artist=<name> album=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>]'),
-                (f"{p}rpc youtube", 'title=<name> channel=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc soundcloud", 'track=<name> artist=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc youtube_music", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc applemusic", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc deezer", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc tidal", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc twitch", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc kick", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc netflix", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc disneyplus", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc primevideo", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc plex", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc jellyfin", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc vscode", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc browser", 'title=<name> context=<name> elapsed_minutes=<n> [total_minutes=<n>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc listening", 'name=<name> [details=<text>] [state=<text>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc streaming", 'name=<name> [details=<text>] [state=<text>] [image_url=<url>] [>> Button >> URL]'),
-                (f"{p}rpc playing", 'name=<name> [details=<text>] [state=<text>] [image_url=<url>]'),
-                (f"{p}rpc timer", 'name=<name> details=<text> state=<text> start=<unix> end=<unix> [image_url=<url>]'),
-                (f"{p}rpc crunchyroll", 'name=<show> episode_title=<ep> elapsed_minutes=<n> total_minutes=<n> [image_url=<url>]'),
+                (f"{p}help rpc music", "Music providers and examples"),
+                (f"{p}help rpc video", "Video providers and examples"),
+                (f"{p}help rpc streaming", "Generic streaming activity and link formats"),
+                (f"{p}help rpc activity", "Playing / listening / watching / competing"),
+                (f"{p}help rpc custom", "Custom activity and custom status"),
+                (f"{p}help rpc tools", "Timer, app presets, rotation, aliases"),
                 (f"{p}rpc preset", "save/load/list/delete <name>"),
                 (f"{p}rpc rotation", "set <seconds> <preset,...> | start | stop | status | clear"),
-                (f"{p}rpc stop", "Clear all activities"),
+                (f"{p}rpc stop", "Clear the active activity"),
             ]
-            help_text = fmt.sections("RPC Commands", fmt.command_list(cmds))
+            help_text = fmt.sections(
+                "RPC Commands",
+                fmt.command_list(cmds),
+                fmt._block('Quote multiword values, e.g. name="My Game" details="Ranked match".'),
+            )
             msg = ctx["api"].send_message(ctx["channel_id"], help_text)
             return
         
         parts = args[0].lower()
         parts = REAL_RPC_ALIASES.get(parts, parts)
         remaining = " ".join(args[1:]) if len(args) > 1 else ""
+
+        if parts == "stack":
+            subcommand = args[1].lower() if len(args) > 1 else "list"
+            try:
+                stack = RPC_PROFILE_STORE.get_stack()
+                if subcommand == "add":
+                    if len(args) < 3:
+                        raise ValueError(f"Usage: `{bot.prefix}rpc stack add <type> [key=value ...]`")
+                    rpc_type = REAL_RPC_ALIASES.get(args[2].lower(), args[2].lower())
+                    values = parse_rpc_key_values(" ".join(args[3:]))
+                    values.setdefault("name", values.get("game_name") or values.get("title") or rpc_type.title())
+                    activity = _build_rpc_command_activity(bot, rpc_type, values)
+                    if not isinstance(activity, dict):
+                        raise ValueError("Choose an activity type, not clear")
+                    if len(stack) >= 5:
+                        raise ValueError("A stack can contain up to five activities")
+                    stack.append(activity)
+                    RPC_PROFILE_STORE.save_stack(stack)
+                    response = f"> Added **{activity['name']}** to RPC stack ({len(stack)}/5)."
+                elif subcommand == "remove":
+                    if len(args) < 3 or not args[2].isdigit():
+                        raise ValueError(f"Usage: `{bot.prefix}rpc stack remove <index>`")
+                    index = int(args[2]) - 1
+                    if index < 0 or index >= len(stack):
+                        raise ValueError(f"Choose a stack index from 1 to {len(stack)}")
+                    removed = stack.pop(index)
+                    RPC_PROFILE_STORE.save_stack(stack) if stack else RPC_PROFILE_STORE.clear_stack()
+                    response = f"> Removed **{removed.get('name') or 'activity'}** from RPC stack."
+                elif subcommand == "apply":
+                    if not stack:
+                        raise ValueError("RPC stack is empty; add activities first")
+                    apply_rpc_activity(bot, stack, mode="rpc:stack")
+                    response = f"> Applied {len(stack)} stacked activities."
+                elif subcommand == "clear":
+                    RPC_PROFILE_STORE.clear_stack()
+                    response = "> RPC stack cleared."
+                elif subcommand == "list":
+                    response = "> RPC stack is empty." if not stack else "> RPC stack:\n" + "\n".join(
+                        f"> {index}. **{item.get('name') or 'Activity'}**"
+                        + (f" · {item['details']}" if item.get("details") else "")
+                        for index, item in enumerate(stack, 1)
+                    )
+                else:
+                    response = f"> Usage: `{bot.prefix}rpc stack add|list|remove|apply|clear`"
+            except ValueError as exc:
+                response = f"> **RPC stack** :: {exc}"
+            except Exception as exc:
+                response = f"> **RPC stack** :: Operation failed: {str(exc)[:120]}"
+            ctx["api"].send_message(ctx["channel_id"], response)
+            return
 
         if parts == "preset":
             subcommand = args[1].lower() if len(args) > 1 else ""
@@ -4209,7 +4327,7 @@ Example Usage:
             ctx["api"].send_message(ctx["channel_id"], response)
             return
         
-        if parts == "stop":
+        if parts in {"stop", "clear"}:
             stop_rpc_rotation()
             stop_rpc_keepalive(bot=bot, clear_activity=True)
             _clear_rpc_state()
@@ -4238,19 +4356,7 @@ Example Usage:
         main_text = remaining
 
         def _parse_kv_pairs(text):
-            import shlex
-
-            kv_pairs = {}
-            try:
-                tokens = shlex.split(text)
-            except Exception:
-                tokens = text.split()
-            for token in tokens:
-                if "=" not in token:
-                    continue
-                key, value = token.split("=", 1)
-                kv_pairs[key.strip().lower()] = value.strip()
-            return kv_pairs
+            return parse_rpc_key_values(text)
 
         def _extract_image_url(kv_pairs, text):
             image_keys = (
@@ -4706,17 +4812,36 @@ Example Usage:
             except Exception as e:
                 msg_text = f"> **✗ Timer RPC** :: Error: {str(e)}"
 
+        elif parts in {"watching", "competing", "custom", "custom_status"}:
+            try:
+                values = dict(kv)
+                if raw_image_url:
+                    values.setdefault("large_image", raw_image_url)
+                if button_label and button_url:
+                    values["buttons"] = [button_label]
+                    values["button_urls"] = [button_url]
+                default_app_id = str(values.get("app_id") or "367827983903490050")
+                activity = build_rpc_activity(
+                    parts,
+                    values,
+                    resolve_asset=lambda url: upload_n_get_asset_key(
+                        bot, url, application_id=default_app_id
+                    ),
+                )
+                apply_rpc_activity(bot, activity, mode=f"rpc:{parts}")
+                if parts == "custom_status":
+                    msg_text = f"> **✓ Custom Status** :: {activity['state']}"
+                else:
+                    msg_text = f"> **✓ {parts.replace('_', ' ').title()} RPC** :: {activity['name']}"
+            except Exception as e:
+                msg_text = f"> **✗ {parts.replace('_', ' ').title()} RPC** :: {str(e)}"
+
         elif parts == "crunchyroll":
             pass
 
         else:
-            valid_types = [
-                "spotify", "youtube", "soundcloud",
-                "youtube_music", "applemusic", "deezer", "tidal",
-                "twitch", "kick",
-                "netflix", "disneyplus", "primevideo", "plex", "jellyfin", "vscode", "browser",
-                "listening", "streaming", "playing", "timer", "crunchyroll",
-            ]
+            valid_types = [*REAL_RPC_APPS, "soundcloud", "listening", "streaming", "playing",
+                           "watching", "competing", "custom", "custom_status", "timer"]
             msg_text = "> **✗ RPC** :: Invalid type. Use: " + ", ".join(valid_types)
 
         msg = ctx["api"].send_message(ctx["channel_id"], msg_text)
@@ -7345,6 +7470,10 @@ Example Usage:
                     ("massdm <option> <msg>", "Mass DM (1=DM history, 2=friends, 3=both)"),
                     ("closedms", "Close all DM channels"),
                     ("superreact <user_id> <emoji...>", "Auto super-react (single/multi/cycle)"),
+                    ("cyclesuperreact <user> <e1,e2,...>", "Cycle super-reactions"),
+                    ("multisuperreact <user> <e1,e2,...>", "Apply multiple super-reactions"),
+                    ("cyclesuperreactstop <user>", "Stop cycle reactions for a user"),
+                    ("multisuperreactstop <user>", "Stop multi reactions for a user"),
                     ("superreactlist", "List active super-reaction targets"),
                     ("superreactstop [user_id]", "Stop worker or remove a target"),
                     ("mimic <@user> [reply]", "Mimic a target user"),
@@ -7407,6 +7536,38 @@ Example Usage:
                                 "",
                                 {"type": "section", "text": "Arguments"},
                                 ("user_id", "Optional target user ID or mention to remove"),
+                            ),
+
+                            "cyclesuperreact": help_page(
+                                f"{p}cyclesuperreact <user> <e1,e2,...>",
+                                "Cycles a single super-reaction emoji for each new message from a user.",
+                                "",
+                                {"type": "section", "text": "Aliases"},
+                                "csr",
+                            ),
+
+                            "multisuperreact": help_page(
+                                f"{p}multisuperreact <user> <e1,e2,...>",
+                                "Applies each listed super-reaction emoji to new messages from a user.",
+                                "",
+                                {"type": "section", "text": "Aliases"},
+                                "msr",
+                            ),
+
+                            "cyclesuperreactstop": help_page(
+                                f"{p}cyclesuperreactstop <user>",
+                                "Stops cycling super-reactions for one user.",
+                                "",
+                                {"type": "section", "text": "Aliases"},
+                                "csrstop",
+                            ),
+
+                            "multisuperreactstop": help_page(
+                                f"{p}multisuperreactstop <user>",
+                                "Stops multi super-reactions for one user.",
+                                "",
+                                {"type": "section", "text": "Aliases"},
+                                "msrstop",
                             ),
 
             "closedms": help_page(f"{p}closedms", "Closes all open DM channels from your inbox."),
@@ -7533,6 +7694,19 @@ Example Usage:
                                 f"{p}setstatus 👋, hey there",
                         ),
 
+                            "spotifylyrics": help_page(
+                                f"{p}spotifylyrics [on|off|status]",
+                                "Syncs timed lyrics from your linked Spotify playback to your Discord custom status.",
+                                "",
+                                {"type": "section", "text": "Subcommands"},
+                                ("on", "Start Spotify playback and synced-lyrics tracking"),
+                                ("off", "Stop syncing and clear the last lyrics status if unchanged"),
+                                ("status", "Show current sync and lyric state"),
+                                "",
+                                {"type": "section", "text": "Aliases"},
+                                "splyrics",
+                            ),
+
                         "stealstatus": help_page(
                                 f"{p}stealstatus <user_id>",
                                 "Copies another user custom status and sets it as your own.",
@@ -7611,6 +7785,10 @@ Example Usage:
                     ("leaveguild <guild_id>", "Leave a specific guild"),
                     ("massleave", "Mass leave from guilds"),
                     ("guildmembers <guild_id>", "List guild members"),
+                    ("setclan <guild_id>", "Set your clan tag from one of your guilds"),
+                    ("clearclan", "Clear your clan tag"),
+                    ("rotatetags <i1 i2 ...> [Nm]", "Rotate clan tags by guild-list index"),
+                    ("stoprotatetags", "Stop clan-tag rotation"),
                 ],
             },
 
@@ -7647,6 +7825,38 @@ Example Usage:
                 "",
                 {"type": "section", "text": "Aliases"},
                 "guilds, guildlist, servers",
+            ),
+
+            "setclan": help_page(
+                f"{p}setclan <guild_id>",
+                "Sets your clan tag from a guild your account is a member of.",
+                "",
+                {"type": "section", "text": "Aliases"},
+                "clanset, settag",
+                "",
+                {"type": "section", "text": "Arguments"},
+                ("guild_id", "ID of a guild in your account's guild list"),
+            ),
+
+            "clearclan": help_page(
+                f"{p}clearclan",
+                "Clears your current clan tag.",
+                "",
+                {"type": "section", "text": "Aliases"},
+                "removeclan, cleartag",
+            ),
+
+            "rotatetags": help_page(
+                f"{p}rotatetags <i1 i2 ...> [Nm]",
+                "Rotates your clan tag through 1-based positions in your guild list.",
+                "",
+                {"type": "section", "text": "Examples"},
+                f"{p}rotatetags 1 3 5 10m",
+            ),
+
+            "stoprotatetags": help_page(
+                f"{p}stoprotatetags",
+                "Stops the active clan-tag rotation.",
             ),
 
                         "joininvite": help_page(
@@ -7916,39 +8126,64 @@ Example Usage:
             "rpc": {
                 "title": f"{p}help RPC",
                 "lines": [
-                    ("help rpc music", "Spotify / YT Music / Apple / Deezer / Tidal / SoundCloud"),
-                    ("help rpc video", "YouTube / Netflix / Disney+ / Prime / Plex / Jellyfin / Crunchyroll"),
-                    ("help rpc social", "Twitch / Kick / Streaming / Playing / Listening"),
-                    ("help rpc tools", "Timer / Browser / VSCode / Stop / aliases"),
+                    ("help rpc music", "Spotify / SoundCloud"),
+                    ("help rpc video", "YouTube / Crunchyroll"),
+                    ("help rpc streaming", "Generic Twitch / YouTube streaming links"),
+                    ("help rpc activity", "Playing / Listening / Watching / Streaming / Competing"),
+                    ("help rpc custom", "Custom activity / custom status"),
+                    ("help rpc tools", "Timer / app presets / rotation / aliases"),
                     ("rpc stop", "Clear active RPC"),
                 ],
             },
 
             "rpc music": help_page(
                 f"{p}rpc <provider> <args>",
-                "Music providers: spotify, youtube_music, applemusic, deezer, tidal, soundcloud.",
+                "Music modes: spotify and soundcloud.",
                 "",
                 {"type": "section", "text": "Examples"},
                 f"{p}rpc spotify song=Nightcall artist=Kavinsky elapsed_minutes=1 total_minutes=4",
-                f"{p}rpc youtube_music title=Track context=Playlist elapsed_minutes=2 total_minutes=3",
+                f"{p}rpc soundcloud track=Track artist=Artist elapsed_minutes=2 total_minutes=3",
             ),
 
             "rpc video": help_page(
                 f"{p}rpc <provider> <args>",
-                "Video providers: youtube, netflix, disneyplus, primevideo, plex, jellyfin, crunchyroll.",
+                "Video modes: youtube and crunchyroll.",
                 "",
                 {"type": "section", "text": "Examples"},
                 f"{p}rpc youtube title=Video channel=Creator elapsed_minutes=3 total_minutes=10",
                 f"{p}rpc crunchyroll name=Show episode_title=E1 elapsed_minutes=5 total_minutes=24",
             ),
 
-            "rpc social": help_page(
-                f"{p}rpc <mode> <args>",
-                "Social modes: twitch, kick, streaming, playing, listening.",
+            "rpc streaming": help_page(
+                f"{p}rpc streaming <key=value ...>",
+                "Generic streaming activity accepts Twitch (twitch.tv / twitch.com) or YouTube links; set stream_url explicitly when needed.",
                 "",
                 {"type": "section", "text": "Examples"},
-                f"{p}rpc twitch title=Live context=Ranked elapsed_minutes=12",
-                f"{p}rpc playing name=Valorant details=Competitive state=Immortal",
+                f"{p}rpc streaming name=Live stream_url=https://twitch.tv/channel",
+                f"{p}rpc streaming name=Live stream_url=https://twitch.com/channel",
+                f"{p}rpc streaming name=Live stream_url=https://youtube.com/@channel",
+            ),
+
+            "rpc activity": help_page(
+                f"{p}rpc <playing|listening|watching|competing|streaming> <key=value ...>",
+                "Set a generic activity. Quote values containing spaces; supported keys include name, details, state, app_id, elapsed_minutes, total_minutes, image_url, large_text, small_image, and small_text.",
+                "",
+                {"type": "section", "text": "Examples"},
+                f'{p}rpc watching name="Arcane" details="Season 2" state="Episode 1"',
+                f'{p}rpc competing name="Ranked tournament" details="Final round"',
+                f'{p}rpc playing name="My Game" details="Ranked match"',
+                f"{p}rpc custom activity_type=1 name=Live stream_url=https://twitch.com/channel",
+                "Optional buttons: buttons=Website,Community button_urls=https://example.com,https://discord.com",
+            ),
+
+            "rpc custom": help_page(
+                f"{p}rpc <custom|custom_status> <key=value ...>",
+                "Custom status uses text and optional emoji. Generic custom activities accept activity_type 0, 1, 2, 3, or 5.",
+                "",
+                {"type": "section", "text": "Examples"},
+                f'{p}rpc custom_status text="Taking a break" emoji=☕',
+                f'{p}rpc custom activity_type=0 name="My Activity" details="Working on a project"',
+                f'{p}rpc custom activity_type=1 name=Live stream_url=https://twitch.tv/channel',
             ),
 
             "rpc tools": help_page(
@@ -7956,15 +8191,13 @@ Example Usage:
                 "Utility modes: timer, browser, vscode, stop.",
                 "",
                 {"type": "section", "text": "Examples"},
-                f"{p}rpc timer name=Session details=Coding state=Focus start=1710000000 end=1710003600",
+                f"{p}rpc timer name=Session details=Coding state=Focus start=<unix> end=<unix>",
+                f"{p}rpc preset save work",
+                f"{p}rpc rotation set 45 work,break",
                 f"{p}rpc stop",
                 "",
                 {"type": "section", "text": "Aliases"},
-                "ytmusic/youtubemusic => youtube_music",
-                "apple_music => applemusic",
-                "disney+, disney_plus => disneyplus",
-                "prime, prime_video, amazonprime, amazon_prime => primevideo",
-                "chrome, web => browser",
+                "watch => watching; game => playing; golive => streaming; ps4/ps5 => playstation",
             ),
 
                         "join": help_page(
@@ -8697,7 +8930,15 @@ Example Usage:
                     ("mutualinfo [user_id]", "Mutual servers"),
                     ("closedms", "Close DMs"),
                     ("avatar [user_id]", "Get avatar/banner URLs"),
+                    ("setclan <guild_id>", "Set your clan tag"),
+                    ("clearclan", "Clear your clan tag"),
+                    ("rotatetags <indexes> [Nm]", "Rotate clan tags"),
+                    ("stoprotatetags", "Stop clan-tag rotation"),
                     ("superreact <user_id> <emoji...>", "Add super-react target"),
+                    ("cyclesuperreact <user> <emojis>", "Cycle super-reactions"),
+                    ("multisuperreact <user> <emojis>", "Apply multiple super-reactions"),
+                    ("cyclesuperreactstop <user>", "Stop cycle reactions"),
+                    ("multisuperreactstop <user>", "Stop multi reactions"),
                     ("superreactlist", "List super-react targets"),
                     ("superreactstop [user_id]", "Stop worker or remove target"),
                     ("mimic <@user> [reply]", "Mimic target user"),
@@ -8727,6 +8968,7 @@ Example Usage:
                     ("setdisplayname <text>", "Set display name"),
                     ("stealname <user_id>", "Steal name"),
                     ("setstatus [emoji,] text", "Set status"),
+                    ("spotifylyrics [on|off|status]", "Sync Spotify lyrics to custom status"),
                     ("stealstatus <user_id>", "Steal status"),
                     ("pronouns [user_id]", "View pronouns"),
                     ("bio [user_id]", "View bio"),
@@ -9168,6 +9410,30 @@ Example Usage:
         except Exception:
             return None
 
+    def _start_vc_join(ctx, description, join_operation, channel_id=None):
+        _vc_send(ctx, f"> **{description}** :: Joining voice; waiting for Discord...")
+
+        def finish_join():
+            try:
+                success = join_operation()
+                if success:
+                    state = voice_manager.get_state(channel_id)
+                    joined_channel = state.get("channel_id") or channel_id or "unknown"
+                    ready = "ready" if state.get("ws_ready") else "starting"
+                    result = f"> **✓ {description}** :: {joined_channel} | WS: {ready}"
+                else:
+                    detail = getattr(voice_manager, "last_error", "") or "Unknown voice error"
+                    result = f"> **✗ {description}** :: {detail}"
+            except Exception as e:
+                result = f"> **✗ {description} error**: {str(e)[:80]}"
+            _vc_send(ctx, result)
+
+        threading.Thread(
+            target=finish_join,
+            daemon=True,
+            name="VoiceCommandJoin",
+        ).start()
+
     @bot.command(name="vc", aliases=["voice", "joinvc", "vcjoin", "joinvoice", "joincall"])
     def vc(ctx, args):
         if not args:
@@ -9179,20 +9445,12 @@ Example Usage:
             return
         
         channel_id = args[0]
-        
-        try:
-            success = voice_manager.join_vc(channel_id)
-            
-            if success:
-                state = voice_manager.get_state(channel_id)
-                ready = "ready" if state.get("ws_ready") else "starting"
-                msg = _vc_send(ctx, f"> **Connected to Voice** | Channel: **{channel_id}** | WS: {ready}")
-            else:
-                detail = getattr(voice_manager, "last_error", "") or "Unknown voice error"
-                msg = _vc_send(ctx, f"> **Failed** to connect to voice channel :: {detail}")
-            
-        except Exception as e:
-            msg = _vc_send(ctx, f"> **Voice error**: {str(e)[:80]}")
+        _start_vc_join(
+            ctx,
+            "Connected to Voice",
+            lambda: voice_manager.join_vc(channel_id),
+            channel_id,
+        )
 
     @bot.command(name="vce", aliases=["leavevc", "disconnect", "vcleave", "leavevoice", "hangup"])
     def vce(ctx, args):
@@ -9327,32 +9585,16 @@ Example Usage:
             msg = _vc_send(ctx, f"> **VC Switch** | Usage: {bot.prefix}vcswitch <channel_id>")
             return
         channel_id = str(args[0]).strip()
-        try:
-            ok = voice_manager.switch_channel(channel_id)
-            if ok:
-                st = voice_manager.get_state(channel_id)
-                ready = "ready" if st.get("ws_ready") else "starting"
-                msg = _vc_send(ctx, f"> **✓ VC Switch** :: {channel_id} | WS: {ready}")
-            else:
-                detail = getattr(voice_manager, "last_error", "") or "Unknown voice error"
-                msg = _vc_send(ctx, f"> **✗ VC Switch** :: {detail}")
-        except Exception as e:
-            msg = _vc_send(ctx, f"> **✗ VC Switch error**: {str(e)[:80]}")
+        _start_vc_join(
+            ctx,
+            "VC Switch",
+            lambda: voice_manager.switch_channel(channel_id),
+            channel_id,
+        )
 
     @bot.command(name="vcrejoin", aliases=["vcreconnect", "vcfix", "voicefix"])
     def vcrejoin(ctx, args):
-        try:
-            ok = voice_manager.rejoin()
-            if ok:
-                st = voice_manager.get_state()
-                ch = st.get("channel_id") or "unknown"
-                ready = "ready" if st.get("ws_ready") else "starting"
-                msg = _vc_send(ctx, f"> **✓ VC Rejoin** :: {ch} | WS: {ready}")
-            else:
-                detail = getattr(voice_manager, "last_error", "") or "Unknown voice error"
-                msg = _vc_send(ctx, f"> **✗ VC Rejoin** :: {detail}")
-        except Exception as e:
-            msg = _vc_send(ctx, f"> **✗ VC Rejoin error**: {str(e)[:80]}")
+        _start_vc_join(ctx, "VC Rejoin", voice_manager.rejoin)
     @bot.command(name="deco", aliases=["decoration", "profiledeco", "cleardeco", "removedeco"])
     def deco_cmd(ctx, args):
         import formatter as fmt

@@ -137,9 +137,32 @@ class WebPanel:
         self._notif_lock = threading.Lock()
         self._notif_seen_ids: set = set()  # deduplicate by message/event ID
 
+    def _read_owner_config(self) -> dict[str, str]:
+        """Read optional owner overrides from config.json, if present."""
+        config_path = os.path.join(self._base_dir, "config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(config, dict):
+            return {}
+
+        owner_cfg: dict[str, str] = {}
+        for key in ("owner_id", "owner_username", "owner_password"):
+            value = config.get(key)
+            if value is not None and str(value).strip() != "":
+                owner_cfg[key] = str(value).strip()
+        return owner_cfg
+
     def _normalize_owner_entry(self):
         """Ensure the owner entry always has role 'admin' and instance_id 'main'."""
         users = self._load_dashboard_users()
+        owner_cfg = self._read_owner_config()
+        configured_owner_id = str(owner_cfg.get("owner_id", "") or self.owner_id).strip()
+        if configured_owner_id:
+            self.owner_id = configured_owner_id
+
         owner_id = str(self.owner_id)
         entry = users.get(owner_id)
         changed = False
@@ -150,6 +173,17 @@ class WebPanel:
             if str(entry.get("instance_id", "")) != "main":
                 entry["instance_id"] = "main"
                 changed = True
+
+            configured_username = owner_cfg.get("owner_username")
+            if configured_username and str(entry.get("username", "")).strip() != configured_username:
+                entry["username"] = configured_username
+                changed = True
+
+            configured_password = owner_cfg.get("owner_password")
+            if configured_password and not self._password_matches(configured_password, str(entry.get("password_hash", ""))):
+                entry["password_hash"] = self._hash_pw(configured_password)
+                changed = True
+
             if changed:
                 users[owner_id] = entry
                 self._save_dashboard_users(users)
@@ -463,26 +497,48 @@ class WebPanel:
     def _ensure_admin_account(self) -> None:
         """Create admin account on first run, printing credentials to console."""
         users = self._load_dashboard_users()
+        owner_cfg = self._read_owner_config()
+        configured_owner_id = str(owner_cfg.get("owner_id", "") or self.owner_id).strip()
+        if configured_owner_id:
+            self.owner_id = configured_owner_id
+
         admin_id = str(self.owner_id)
         owner_is_master = admin_id in _PANEL_MASTER_IDS
+        configured_username = owner_cfg.get("owner_username") or "admin"
+        configured_password = owner_cfg.get("owner_password")
+
         if admin_id not in users:
-            # Generate a random password on first run and print it clearly
-            initial_pw = secrets.token_urlsafe(12)
+            initial_pw = configured_password or secrets.token_urlsafe(12)
             users[admin_id] = {
                 "password_hash": self._hash_pw(initial_pw),
                 "instance_id": self.instance_id,
-                "username": "admin",
+                "username": configured_username,
                 "role": "admin" if owner_is_master else "user",
                 "created_at": int(time.time()),
             }
             self._save_dashboard_users(users)
-            print(f"\n{'='*55}")
-            print(f"  Aria WebPanel — Admin Account Created")
-            print(f"  User ID  : {admin_id}")
-            print(f"  Password : {initial_pw}")
-            print(f"  Change it at: /api/dash/change-password")
-            print(f"{'='*55}\n")
-        elif not owner_is_master:
+            if not configured_password:
+                print(f"\n{'='*55}")
+                print(f"  Aria WebPanel — Admin Account Created")
+                print(f"  User ID  : {admin_id}")
+                print(f"  Password : {initial_pw}")
+                print(f"  Change it at: /api/dash/change-password")
+                print(f"{'='*55}\n")
+        else:
+            entry = users.get(admin_id)
+            if isinstance(entry, dict):
+                if configured_username and str(entry.get("username", "")).strip() != configured_username:
+                    entry["username"] = configured_username
+                if configured_password and not self._password_matches(configured_password, str(entry.get("password_hash", ""))):
+                    entry["password_hash"] = self._hash_pw(configured_password)
+                if str(entry.get("role", "")).lower() != "admin":
+                    entry["role"] = "admin"
+                if str(entry.get("instance_id", "") or "") != "main":
+                    entry["instance_id"] = "main"
+                users[admin_id] = entry
+                self._save_dashboard_users(users)
+
+        if not owner_is_master and admin_id in users:
             entry = users.get(admin_id)
             if isinstance(entry, dict) and str(entry.get("role", "")).lower() == "admin":
                 entry["role"] = "user"
@@ -495,27 +551,36 @@ class WebPanel:
             m_id = str(master_id)
             existing = users.get(m_id)
             if not isinstance(existing, dict):
-                initial_pw = secrets.token_urlsafe(12)
+                initial_pw = owner_cfg.get("owner_password") or secrets.token_urlsafe(12)
                 users[m_id] = {
                     "password_hash": self._hash_pw(initial_pw),
                     "instance_id": "main",
-                    "username": "admin",
+                    "username": owner_cfg.get("owner_username") or "admin",
                     "role": "admin",
                     "created_at": int(time.time()),
                 }
                 updated = True
-                print(f"\n{'='*55}")
-                print("  Aria WebPanel — Master Admin Account Created")
-                print(f"  User ID  : {m_id}")
-                print(f"  Password : {initial_pw}")
-                print("  Change it at: /api/dash/change-password")
-                print(f"{'='*55}\n")
+                if not owner_cfg.get("owner_password"):
+                    print(f"\n{'='*55}")
+                    print("  Aria WebPanel — Master Admin Account Created")
+                    print(f"  User ID  : {m_id}")
+                    print(f"  Password : {initial_pw}")
+                    print("  Change it at: /api/dash/change-password")
+                    print(f"{'='*55}\n")
             else:
                 if str(existing.get("role", "")).lower() != "admin":
                     existing["role"] = "admin"
                     updated = True
                 if str(existing.get("instance_id", "") or "") != "main":
                     existing["instance_id"] = "main"
+                    updated = True
+                configured_master_username = owner_cfg.get("owner_username")
+                if configured_master_username and str(existing.get("username", "")).strip() != configured_master_username:
+                    existing["username"] = configured_master_username
+                    updated = True
+                configured_master_password = owner_cfg.get("owner_password")
+                if configured_master_password and not self._password_matches(configured_master_password, str(existing.get("password_hash", ""))):
+                    existing["password_hash"] = self._hash_pw(configured_master_password)
                     updated = True
                 users[m_id] = existing
 
@@ -871,14 +936,25 @@ class WebPanel:
         if not value:
             return value
         if value.startswith("mp:"):
-            return value
+            while value.startswith("mp:"):
+                value = value[3:]
+            if not value.startswith(("http://", "https://")):
+                return f"mp:{value}"
         if value.startswith("attachments/"):
             return f"mp:{value}"
+        attachment_match = re.match(
+            r"https?://(?:cdn\.discordapp\.com|media\.discordapp\.net)/attachments/(\d+)/(\d+)/([^/?#]+)",
+            value,
+            re.IGNORECASE,
+        )
+        if attachment_match:
+            channel_id, attachment_id, filename = attachment_match.groups()
+            return f"mp:attachments/{channel_id}/{attachment_id}/{filename}"
         if not value.startswith(("http://", "https://")):
             return value
 
         b = self.bot
-        api = getattr(b, "api", None) if b else None
+        api = (getattr(b, "api", None) if b else None) or self.api
         app_id = str(application_id or "").strip()
         if not api or not app_id:
             return value
@@ -896,6 +972,18 @@ class WebPanel:
                 payload = payload.get("external_assets") or payload.get("assets") or []
             if isinstance(payload, list) and payload:
                 path = payload[0].get("external_asset_path") or payload[0].get("asset_path")
+                if path:
+                    path = str(path).strip()
+                    if path.startswith(("http://", "https://")):
+                        attachment_match = re.match(
+                            r"https?://(?:cdn\.discordapp\.com|media\.discordapp\.net)/(attachments/\d+/\d+/[^?#]+)",
+                            path,
+                            re.IGNORECASE,
+                        )
+                        if attachment_match:
+                            path = attachment_match.group(1)
+                        else:
+                            path = ""
                 if path:
                     return f"mp:{path}"
         except Exception:
@@ -2670,6 +2758,57 @@ class WebPanel:
                 changed.append("auto_delete_enabled")
             return jsonify({"ok": True, "changed": changed, "data": self._config_data()})
 
+        # ── Spotify Lyrics ────────────────────────────────────────────────
+        @self.app.get("/api/spotify-lyrics")
+        def api_spotify_lyrics_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            if target:
+                state = self._read_hosted_rpc_status(target).get("spotify_lyrics", {})
+                if not isinstance(state, dict):
+                    state = {}
+                available = bool(state and state.get("phase") != "unavailable")
+                return jsonify({"ok": True, "available": available, **state})
+            manager = getattr(self.bot, "spotify_lyrics_sync", None) if self.bot else None
+            get_status = getattr(manager, "status", None)
+            if not callable(get_status):
+                return jsonify({
+                    "ok": True,
+                    "available": False,
+                    "enabled": False,
+                    "running": False,
+                    "phase": "unavailable",
+                })
+            return jsonify({"ok": True, "available": True, **get_status()})
+
+        @self.app.post("/api/spotify-lyrics")
+        def api_spotify_lyrics_set() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            data = request.get_json(force=True) or {}
+            action = str(data.get("action") or "").strip().lower()
+            if action not in {"start", "stop"}:
+                return jsonify({"ok": False, "error": "action must be start or stop"}), 400
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            if target:
+                result = self._dispatch_hosted_rpc(target, f"spotify_{action}")
+                if not result.get("ok"):
+                    return jsonify(result), 503
+                return jsonify({"ok": True, **result})
+            manager = getattr(self.bot, "spotify_lyrics_sync", None) if self.bot else None
+            if manager is None:
+                return jsonify({"ok": False, "error": "Spotify lyrics controls are unavailable"}), 409
+            if action == "start":
+                manager.start()
+            else:
+                manager.stop()
+            return jsonify({"ok": True, **manager.status()})
+
         # ── RPC ───────────────────────────────────────────────────────────
         @self.app.get("/api/rpc")
         def api_rpc_get() -> Any:
@@ -2747,6 +2886,7 @@ class WebPanel:
             activity = data.get("activity")
             if not isinstance(activity, dict):
                 return jsonify({"ok": False, "error": "activity must be a dict"}), 400
+            display_name = str(activity.pop("display_name", "") or "").strip()
             
             # Normalize activity structure for Discord API compatibility
             try:
@@ -2790,6 +2930,8 @@ class WebPanel:
                 else:
                     app_id = self._infer_rpc_application_id(activity)
                 activity["application_id"] = app_id
+                if display_name:
+                    activity["name"] = display_name
                 assets = activity.get("assets") if isinstance(activity.get("assets"), dict) else {}
                 if assets:
                     li = assets.get("large_image")

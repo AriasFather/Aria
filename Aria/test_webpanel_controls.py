@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 
+from bot import DiscordBot
 from message_logger import MessageLogger
 from rpc_profiles import RPCProfileStore
 from hosted_command_registry import write_command_registry
@@ -94,6 +95,56 @@ class WebPanelControlTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/config").status_code, 403)
         self.assertEqual(self.client.post("/api/client", json={"client_type": "vr"}).status_code, 403)
         self.assertEqual(self.client.post("/api/presence", json={"status": "online"}).status_code, 403)
+        self.assertEqual(self.client.get("/api/spotify-lyrics").status_code, 403)
+        self.assertEqual(self.client.post("/api/spotify-lyrics", json={"action": "start"}).status_code, 403)
+
+    def test_spotify_lyrics_control_uses_local_manager(self):
+        self.authenticated = True
+        panel._current_hosted_rpc_target = lambda: None
+
+        class SpotifyLyrics:
+            def __init__(self):
+                self.enabled = False
+
+            def start(self):
+                self.enabled = True
+
+            def stop(self):
+                self.enabled = False
+
+            def status(self):
+                return {"enabled": self.enabled, "running": self.enabled, "phase": "syncing" if self.enabled else "idle"}
+
+        panel.bot.spotify_lyrics_sync = SpotifyLyrics()
+        started = self.client.post("/api/spotify-lyrics", json={"action": "start"})
+        state = self.client.get("/api/spotify-lyrics")
+        stopped = self.client.post("/api/spotify-lyrics", json={"action": "stop"})
+
+        self.assertTrue(started.json["ok"])
+        self.assertTrue(state.json["available"])
+        self.assertTrue(state.json["enabled"])
+        self.assertTrue(stopped.json["ok"])
+        self.assertFalse(stopped.json["enabled"])
+
+    def test_spotify_lyrics_control_dispatches_to_hosted_client(self):
+        self.authenticated = True
+        control_dir = Path(self.temp_dir.name) / "hosted_runtime" / "client-spotify"
+        control_dir.mkdir(parents=True)
+        target = {"token_id": "client-spotify", "control_dir": str(control_dir), "active": True}
+        panel._current_hosted_rpc_target = lambda: target
+        (control_dir / "rpc_status.json").write_text(
+            json.dumps({"spotify_lyrics": {"enabled": True, "running": True, "phase": "syncing", "title": "Song"}}),
+            encoding="utf-8",
+        )
+
+        with patch("hosted_rpc_bridge.dispatch_hosted_rpc", return_value={"ok": True, "spotify_lyrics": {"enabled": False}}) as dispatch:
+            state = self.client.get("/api/spotify-lyrics")
+            stopped = self.client.post("/api/spotify-lyrics", json={"action": "stop"})
+
+        self.assertTrue(state.json["available"])
+        self.assertEqual(state.json["title"], "Song")
+        self.assertTrue(stopped.json["ok"])
+        dispatch.assert_called_once_with(str(control_dir), "spotify_stop", None)
 
     def test_rpc_set_uses_live_activity_callback(self):
         self.authenticated = True
@@ -104,6 +155,43 @@ class WebPanelControlTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["ok"])
         self.assertEqual(panel.bot.activity["name"], activity["name"])
+
+    def test_rpc_display_name_overrides_title_after_app_id_detection(self):
+        self.authenticated = True
+        with self.client.session_transaction() as active_session:
+            active_session["user_id"] = _PANEL_MASTER_ID
+        response = self.client.post("/api/rpc", json={
+            "action": "set",
+            "activity": {
+                "type": 0,
+                "name": "Twitch",
+                "display_name": "My Stream",
+                "application_id": "1494507808329171096",
+            },
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(panel.bot.activity["name"], "My Stream")
+        self.assertEqual(panel.bot.activity["application_id"], "488633707456348190")
+        self.assertNotIn("display_name", panel.bot.activity)
+
+    def test_rpc_discord_cdn_attachment_urls_become_media_proxy_keys(self):
+        image_url = "https://media.discordapp.net/attachments/123/456/cover.png?ex=abc&is=def"
+        self.assertEqual(
+            panel._normalize_rpc_asset_key(image_url, "789"),
+            "mp:attachments/123/456/cover.png",
+        )
+        self.assertEqual(
+            panel._normalize_rpc_asset_key(f"mp:{image_url}", "789"),
+            "mp:attachments/123/456/cover.png",
+        )
+        bot = object.__new__(DiscordBot)
+        normalized = bot._normalize_activity_payload({
+            "assets": {"large_image": f"mp:{image_url}"},
+        })
+        self.assertEqual(
+            normalized["assets"]["large_image"],
+            "mp:attachments/123/456/cover.png",
+        )
 
     def test_hosted_rpc_uses_child_and_instance_specific_profile_store(self):
         self.authenticated = True
@@ -555,6 +643,19 @@ class WebPanelControlTests(unittest.TestCase):
         self.assertNotIn("account-secret-id", str(response.json["data"]["accounts"]))
         self.assertNotIn("password_hash", str(response.json["data"]))
         self.assertEqual(response.json["data"]["password_reset_requests"][0]["username"], "aria-user")
+
+    def test_owner_credentials_from_config_are_applied_to_admin_account(self):
+        users = {}
+        saved = {}
+        panel._load_dashboard_users = lambda: dict(users)
+        panel._save_dashboard_users = lambda updated: (saved.clear(), saved.update(updated), users.clear(), users.update(updated))
+        panel._read_owner_config = lambda: {"owner_username": "redacted-user", "owner_password": "TEST_OWNER_PASSWORD"}
+
+        panel._ensure_admin_account()
+
+        self.assertEqual(saved[panel.owner_id]["username"], "redacted-user")
+        self.assertEqual(saved[panel.owner_id]["role"], "admin")
+        self.assertTrue(panel._password_matches("TEST_OWNER_PASSWORD", saved[panel.owner_id]["password_hash"]))
 
     def test_password_reset_approval_is_owner_only_and_rotates_once(self):
         users = {"target-id": {"username": "aria-user", "password_hash": "old-hash"}}
