@@ -18,8 +18,6 @@ except ImportError:
 bot = None
 web_panel = None
 
-import importlib
-
 import re
 import threading
 import time
@@ -65,6 +63,8 @@ from discord_api_types import ActivityType, RelationshipType
 from format_bootstrap import install_global_formatter
 from developer import DeveloperTools
 from command_integration import integrate_command_engine
+from hosted_command_registry import write_command_registry
+from hosted_rpc_bridge import start_hosted_rpc_worker
 import sys
 import os
 
@@ -1430,20 +1430,20 @@ def main():
     config = Config()
     token = config.get("token")
     
-    # Start web panel early, regardless of token status
-    print("Starting web panel automatically...")
-    try:
-        import importlib
-        webpanel_module = importlib.import_module("web_panel")
-    except Exception:
+    if not HOSTED_MODE:
+        print("Starting web panel automatically...")
         try:
-            import webpanel as webpanel_module
-        except Exception as e:
-            print(f"Failed to import web panel module: {e}")
+            import importlib
+            webpanel_module = importlib.import_module("web_panel")
+        except Exception:
+            try:
+                import webpanel as webpanel_module
+            except Exception as e:
+                print(f"Failed to import web panel module: {e}")
+            else:
+                _start_web_panel_early(webpanel_module)
         else:
             _start_web_panel_early(webpanel_module)
-    else:
-        _start_web_panel_early(webpanel_module)
     
     if not token or token == "token here":
         print(f"Error: No token found in {config.config_file}")
@@ -12835,16 +12835,13 @@ Example Usage:
                 return
             _stop_once_state["done"] = True
 
+        rpc_worker_stop = getattr(bot, "_hosted_rpc_stop_event", None)
+        if rpc_worker_stop is not None:
+            rpc_worker_stop.set()
+
         print("[AccountData] Stopping local stats job...")
 
         stop_rpc_keepalive(bot=bot, clear_activity=False)
-
-        # Main controller shutdown should also stop all hosted child instances.
-        if not HOSTED_MODE:
-            try:
-                host_manager.cleanup()
-            except Exception:
-                pass
 
         account_data_manager.stop_stats_job()
         account_data_manager.stop_auto_scrape()
@@ -12853,6 +12850,22 @@ Example Usage:
         boost_manager.save_state()
         original_stop()
     bot.stop = new_stop
+
+    if HOSTED_MODE:
+        registry_path = os.environ.get("HOSTED_COMMANDS_FILE")
+        if registry_path:
+            try:
+                registry = write_command_registry(bot, registry_path)
+                print(f"[HOSTED] Published {registry['total']} commands for this client")
+            except Exception as e:
+                print(f"[HOSTED] Command registry publish failed: {e}")
+
+            control_dir = os.environ.get("HOSTED_RUNTIME_DIR")
+            if control_dir:
+                try:
+                    bot._hosted_rpc_stop_event = start_hosted_rpc_worker(bot, control_dir)
+                except Exception as e:
+                    print(f"[HOSTED] RPC control worker failed: {e}")
     
     try:
         bot.run()

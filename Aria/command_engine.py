@@ -39,7 +39,7 @@ class CommandInfo:
 class CommandEngine:
     """Manages 500+ commands with proper help system and ANSI formatting"""
     
-    def __init__(self, prefix: str = ";"):
+    def __init__(self, prefix: str = "$"):
         self.prefix = prefix
         self.categories: Dict[str, CommandCategory] = {}
         self.category_aliases: Dict[str, str] = {}
@@ -598,7 +598,7 @@ def setup_commands_500(engine: CommandEngine) -> None:
 
 if __name__ == "__main__":
     # Example usage
-    engine = CommandEngine(prefix=";")
+    engine = CommandEngine(prefix="$")
     setup_commands_500(engine)
     
     # Test help output

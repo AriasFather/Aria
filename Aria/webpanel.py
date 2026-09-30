@@ -553,8 +553,10 @@ class WebPanel:
         try:
             from host import host_manager as hm
 
-            saved = dict(getattr(hm, "saved_users", {}) or {})
-            active = dict(getattr(hm, "active_tokens", {}) or {})
+            with hm.lock:
+                saved = dict(getattr(hm, "saved_users", {}) or {})
+                active = dict(getattr(hm, "active_tokens", {}) or {})
+                processes = dict(getattr(hm, "processes", {}) or {})
         except Exception:
             return []
 
@@ -565,8 +567,17 @@ class WebPanel:
             # Accept either direct owner match or account user_id match for this session user.
             if owner != uid and str(info.get("user_id", "") or "").strip() != uid:
                 continue
-            active_info = active.get(token_id, {}) if isinstance(active.get(token_id, {}), dict) else {}
-            entries.append((token_id, info, token_id in active, active_info))
+            active_info = dict(active.get(token_id, {})) if isinstance(active.get(token_id, {}), dict) else {}
+            process = processes.get(token_id)
+            try:
+                process_running = token_id in active and process is not None and process.poll() is None
+            except Exception:
+                process_running = False
+            gateway_status = self._hosted_gateway_status(token_id)
+            active_info.update(gateway_status)
+            active_info["process_running"] = process_running
+            is_connected = process_running and bool(gateway_status.get("connected"))
+            entries.append((token_id, info, is_connected, active_info))
         return entries
 
     def _get_primary_user_instance(self, user_id: str) -> Optional[dict[str, Any]]:
@@ -576,7 +587,33 @@ class WebPanel:
             return None
 
         # Prefer active entries; otherwise keep latest token id.
-        entries.sort(key=lambda item: (0 if item[2] else 1, str(item[0])), reverse=False)
+        entries.sort(key=lambda item: (
+            0 if item[2] else 1,
+            0 if item[3].get("process_running") else 1,
+            str(item[0]),
+        ))
+        token_id, saved_info, is_active, active_info = entries[0]
+        return {
+            "token_id": token_id,
+            "saved": saved_info,
+            "active": is_active,
+            "active_info": active_info,
+        }
+
+    def _get_user_instance_for_discord_id(self, user_id: str, discord_id: str) -> Optional[dict[str, Any]]:
+        """Find this dashboard user's hosted instance for a specific Discord account."""
+        entries = [
+            entry for entry in self._list_user_hosted_entries(user_id)
+            if str(entry[1].get("user_id", "") or "").strip() == str(discord_id)
+        ]
+        if not entries:
+            return None
+
+        entries.sort(key=lambda item: (
+            0 if item[2] else 1,
+            0 if item[3].get("process_running") else 1,
+            str(item[0]),
+        ))
         token_id, saved_info, is_active, active_info = entries[0]
         return {
             "token_id": token_id,
@@ -646,6 +683,90 @@ class WebPanel:
             return {"primary": primary, "saved": saved, "api": api}
         except Exception:
             return {"primary": primary, "saved": saved, "api": None}
+
+    def _load_hosted_command_registry(self, token_id: str) -> dict[str, Any] | None:
+        token_ref = str(token_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", token_ref):
+            return None
+        try:
+            from hosted_command_registry import load_command_registry
+
+            registry_path = os.path.join(self._base_dir, "hosted_runtime", f"commands_{token_ref}.json")
+            return load_command_registry(registry_path)
+        except Exception:
+            return None
+
+    def _hosted_instance_directory(self, token_id: str) -> str | None:
+        token_ref = str(token_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", token_ref):
+            return None
+        return os.path.join(self._base_dir, f"hosted_bot_{token_ref}")
+
+    def _current_hosted_rpc_target(self) -> dict[str, Any] | None:
+        if not self._require_session() or self._is_owner_session():
+            return None
+        hosted_ctx = self._session_hosted_live_context()
+        primary = hosted_ctx.get("primary") if isinstance(hosted_ctx, dict) else None
+        if not primary:
+            return {"error": "No hosted client is linked to this account."}
+        token_id = str(primary.get("token_id") or "")
+        instance_dir = self._hosted_instance_directory(token_id)
+        if not instance_dir:
+            return {"error": "Hosted client reference is invalid."}
+        return {
+            "token_id": token_id,
+            "instance_dir": instance_dir,
+            "control_dir": os.path.join(self._base_dir, "hosted_runtime", token_id),
+            "active": bool(primary.get("active")),
+        }
+
+    def _rpc_profile_store_for_target(self, target: dict[str, Any] | None) -> RPCProfileStore | None:
+        if target is None:
+            return self._rpc_profile_store
+        if target.get("error"):
+            return None
+        return RPCProfileStore(os.path.join(target["instance_dir"], "rpc_profiles.json"))
+
+    @staticmethod
+    def _read_hosted_runtime_state(target: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with open(os.path.join(target["instance_dir"], "runtime_state.json"), "r", encoding="utf-8") as file_handle:
+                payload = json.load(file_handle)
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    @staticmethod
+    def _read_hosted_rpc_status(target: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with open(os.path.join(target["control_dir"], "rpc_status.json"), "r", encoding="utf-8") as file_handle:
+                payload = json.load(file_handle)
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _hosted_gateway_status(self, token_id: str) -> dict[str, Any]:
+        token_ref = str(token_id or "").strip()
+        if not self._hosted_instance_directory(token_ref):
+            return {"connected": False, "identified": False}
+        control_dir = os.path.join(self._base_dir, "hosted_runtime", token_ref)
+        status = self._read_hosted_rpc_status({"control_dir": control_dir})
+        updated_at = int(status.get("updated_at", 0) or 0)
+        fresh = bool(updated_at and time.time() - updated_at <= 8)
+        return {
+            **status,
+            "connected": bool(fresh and status.get("connected")),
+            "identified": bool(fresh and status.get("identified")),
+            "heartbeat_fresh": fresh,
+        }
+
+    @staticmethod
+    def _dispatch_hosted_rpc(target: dict[str, Any], action: str, activity: dict[str, Any] | None = None) -> dict[str, Any]:
+        if not target.get("active"):
+            return {"ok": False, "error": "Hosted client is not running"}
+        from hosted_rpc_bridge import dispatch_hosted_rpc
+
+        return dispatch_hosted_rpc(target["control_dir"], action, activity)
 
     def _hosted_user_profile(self, hosted_ctx: dict[str, Any]) -> dict[str, Any]:
         """Fetch best-effort live user profile from hosted token API."""
@@ -889,6 +1010,18 @@ class WebPanel:
         except Exception:
             return None
 
+    def _resolve_self_hosting_manager(self):
+        """Return the shared self-hosting manager when the bot has no explicit reference."""
+        manager = getattr(self.bot, "self_hosting_manager", None) if self.bot else None
+        if manager is not None:
+            return manager
+        try:
+            from self_hosting import self_hosting_manager
+
+            return self_hosting_manager
+        except Exception:
+            return None
+
     def _resolve_afk_identity(self) -> str:
         """Choose AFK identity: bot user id, hosted instance user id, then session user id."""
         b = self.bot
@@ -969,26 +1102,31 @@ class WebPanel:
                     saved = primary.get("saved") or {}
                     active_info = primary.get("active_info") or {}
                     connected = bool(primary.get("active"))
+                    process_running = bool(active_info.get("process_running"))
                     live_profile = self._hosted_user_profile(hosted_ctx)
                     user_id = str(live_profile.get("user_id") or saved.get("user_id") or "")
                     username = str(live_profile.get("username") or saved.get("username") or "User Instance")
                     avatar_url = str(live_profile.get("avatar_url") or self._avatar_url_for(user_id, "") or "https://cdn.discordapp.com/embed/avatars/0.png")
                     connected_at = int(active_info.get("connected_at") or 0)
                     uptime = self._fmt_uptime_from_ts(connected_at) if connected and connected_at else "0h 0m 0s"
+                    command_registry = self._load_hosted_command_registry(str(primary.get("token_id") or "")) or {}
                     return {
                         "username": username,
                         "user_id": user_id or "—",
                         "avatar_url": avatar_url,
                         "prefix": str(saved.get("prefix") or "$"),
-                        "status": "online" if connected else "offline",
+                        "status": "online" if connected else "connecting" if process_running else "offline",
                         "connected": connected,
-                        "identified": connected,
+                        "connecting": process_running and not connected,
+                        "process_running": process_running,
+                        "identified": bool(active_info.get("identified")),
+                        "connection_error": str(active_info.get("connection_error") or ""),
                         "gateway_latency_ms": active_info.get("gateway_latency_ms"),
                         "reconnect_attempts": int(active_info.get("consecutive_failures", 0) or 0),
                         "connection_quality": active_info.get("connection_quality"),
                         "network_stability": active_info.get("network_stability"),
-                        "command_count": 0,
-                        "commands_registered": 0,
+                        "command_count": int(active_info.get("command_count", 0) or 0),
+                        "commands_registered": int(command_registry.get("total", 0) or 0),
                         "client_type": str(active_info.get("client_type") or saved.get("client_type") or "hosted"),
                         "available_clients": ["web", "desktop", "mobile", "vr"],
                         "ui_version": "v1",
@@ -1201,6 +1339,27 @@ class WebPanel:
         b = self.bot
         command_prefix = str(getattr(b, "prefix", "") or "")
 
+        if self._require_session() and not self._require_admin():
+            hosted_ctx = self._session_hosted_live_context()
+            primary = hosted_ctx.get("primary") if isinstance(hosted_ctx, dict) else None
+            if not primary:
+                return {"commands": [], "total": 0, "prefix": "$", "loading": False, "error": "No hosted client is linked to this account."}
+
+            saved = primary.get("saved") or {}
+            command_prefix = str(saved.get("prefix") or "$")
+            registry = self._load_hosted_command_registry(str(primary.get("token_id") or ""))
+            if registry is not None:
+                registry["loading"] = False
+                return registry
+
+            return {
+                "commands": [],
+                "total": 0,
+                "prefix": command_prefix,
+                "loading": bool((primary.get("active_info") or {}).get("process_running")),
+                "error": "Hosted client has not published its command registry. Reconnect this instance to update it.",
+            }
+
         usage_counts: dict[str, int] = {}
         try:
             history = self._history_data()
@@ -1269,7 +1428,7 @@ class WebPanel:
             try:
                 from command_engine import CommandEngine, setup_commands_500
 
-                fallback_engine = CommandEngine(prefix=str(getattr(b, "prefix", ";") if b is not None else ";"))
+                fallback_engine = CommandEngine(prefix=str(getattr(b, "prefix", "$") if b is not None else "$"))
                 setup_commands_500(fallback_engine)
                 for raw_name, info in (getattr(fallback_engine, "all_commands", {}) or {}).items():
                     name = str(getattr(info, "name", "") or raw_name)
@@ -2099,6 +2258,7 @@ class WebPanel:
             form = request.form
             login_name = str(form.get("username", "") or form.get("user_id", "")).strip()
             password = str(form.get("password", ""))
+            discord_id = str(form.get("discord_id", "")).strip()
             remember = bool(form.get("remember_me"))
             next_url = str(form.get("next") or "/dashboard")
             # Basic safety: only allow relative paths
@@ -2128,6 +2288,8 @@ class WebPanel:
                 users[user_id] = entry
                 self._save_dashboard_users(users)
             is_master = user_id in self._configured_admin_ids()
+            if not is_master and not re.fullmatch(r"[0-9]{15,22}", discord_id):
+                return redirect(f"/login?error=Enter+a+valid+Discord+ID&next={next_url}")
             # Admin can log in from any instance; regular users must match this instance
             role = "admin" if is_master else str(entry.get("role", "user") or "user")
             inst = entry.get("instance_id", "")
@@ -2153,12 +2315,18 @@ class WebPanel:
             session["user_id"] = user_id
             session["instance_id"] = self.instance_id
             session["role"] = role
+            if role != "admin":
+                session["discord_user_id"] = discord_id
             self._mark_login_success(user_id, request.remote_addr or "")
 
             if role != "admin":
-                primary = self._get_primary_user_instance(user_id)
+                hosted_entries = self._list_user_hosted_entries(user_id)
+                primary = self._get_user_instance_for_discord_id(user_id, discord_id)
                 if primary:
                     session["host_token_id"] = str(primary.get("token_id") or "")
+                elif hosted_entries:
+                    session.clear()
+                    return redirect(f"/login?error=No+connected+instance+matches+that+Discord+ID&next={next_url}")
                 else:
                     return redirect("/connect-instance")
             return redirect(next_url)
@@ -2220,6 +2388,9 @@ class WebPanel:
                     return redirect("/connect-instance?error=Invalid+token")
 
                 account_id = str((account or {}).get("id") or "")
+                expected_discord_id = str(session.get("discord_user_id", "") or "")
+                if expected_discord_id and account_id != expected_discord_id:
+                    return redirect("/connect-instance?error=Token+does+not+match+your+Discord+ID")
                 account_name = str((account or {}).get("username") or "")
                 discrim = str((account or {}).get("discriminator") or "")
                 if discrim and discrim != "0":
@@ -2337,7 +2508,130 @@ class WebPanel:
 
         @self.app.get("/api/commands")
         def api_commands() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             return jsonify({"ok": True, "data": self._commands_data()})
+
+        @self.app.get("/api/friends")
+        def api_friends() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            requester_id = str(session.get("user_id") or "")
+            bot_user_id = str(getattr(self.bot, "user_id", "") or "")
+            if requester_id != bot_user_id and not self._is_owner_session():
+                return jsonify({"ok": False, "error": "Forbidden"}), 403
+            scraper = getattr(self.bot, "friend_scraper", None) if self.bot else None
+            if scraper is None:
+                return jsonify({"ok": False, "error": "Friend data is unavailable"}), 503
+            try:
+                friend_ids = scraper.get_all_friend_ids(force_refresh=False)
+                details = scraper.get_all_friend_details()
+                friends = []
+                for friend_id in friend_ids:
+                    friend = details.get(str(friend_id), {})
+                    friends.append({
+                        "user_id": str(friend_id),
+                        "username": str(friend.get("global_name") or friend.get("username") or "Unknown"),
+                        "bot": bool(friend.get("bot", False)),
+                    })
+                friends.sort(key=lambda item: item["username"].casefold())
+                return jsonify({"ok": True, "friends": friends, "total": len(friends)})
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+
+        @self.app.get("/api/self-hosted")
+        def api_self_hosted() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            manager = self._resolve_self_hosting_manager()
+            if manager is None:
+                return jsonify({"ok": False, "error": "Self-hosting is unavailable"}), 503
+            requester_id = str(session.get("user_id") or "")
+            is_owner = self._is_owner_session()
+            accounts = manager.list_hosted_accounts(None if is_owner else requester_id)
+            return jsonify({
+                "ok": True,
+                "accounts": accounts,
+                "total": len(accounts),
+                "is_owner": is_owner,
+                "registration_enabled": bool(manager.registration_enabled),
+                "authorized_users": manager.list_authorized_users() if is_owner else [],
+            })
+
+        @self.app.post("/api/self-hosted")
+        def api_self_hosted_action() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            manager = self._resolve_self_hosting_manager()
+            if manager is None:
+                return jsonify({"ok": False, "error": "Self-hosting is unavailable"}), 503
+            data = request.get_json(force=True) or {}
+            requester_id = str(session.get("user_id") or "")
+            is_owner = self._is_owner_session()
+            action = str(data.get("action") or "").strip().lower()
+
+            if action == "register":
+                token = str(data.get("token") or "").strip()
+                prefix = str(data.get("prefix") or ";").strip()[:5] or ";"
+                if not token:
+                    return jsonify({"ok": False, "error": "Token is required"}), 400
+                if not is_owner and not manager.can_register(requester_id):
+                    return jsonify({"ok": False, "error": "Self-host registration is disabled"}), 403
+                try:
+                    from host import host_manager
+
+                    valid, account = host_manager.validate_token_api(token)
+                except Exception:
+                    return jsonify({"ok": False, "error": "Token validation is unavailable"}), 503
+                if not valid:
+                    return jsonify({"ok": False, "error": "Invalid token"}), 400
+                user_id = str((account or {}).get("id") or "")
+                if not user_id:
+                    return jsonify({"ok": False, "error": "Token did not resolve to an account"}), 400
+                ok, message = manager.register_user(user_id, token, requester_id, prefix)
+                return jsonify({"ok": bool(ok), "message": message}), (200 if ok else 400)
+
+            if action == "registration":
+                if not is_owner:
+                    return jsonify({"ok": False, "error": "Owner only"}), 403
+                ok, message = manager.set_registration_enabled(bool(data.get("enabled")))
+                return jsonify({"ok": bool(ok), "message": message})
+
+            if action in {"authorize", "unauthorize"}:
+                if not is_owner:
+                    return jsonify({"ok": False, "error": "Owner only"}), 403
+                target_user_id = str(data.get("user_id") or "").strip()
+                if not target_user_id:
+                    return jsonify({"ok": False, "error": "User ID is required"}), 400
+                if not target_user_id.isascii() or not target_user_id.isdigit():
+                    return jsonify({"ok": False, "error": "User ID must contain only digits"}), 400
+                if action == "authorize":
+                    ok, message = manager.authorize_user(target_user_id)
+                else:
+                    ok, message = manager.unauthorize_user(target_user_id)
+                return jsonify({"ok": bool(ok), "message": message}), (200 if ok else 400)
+
+            user_id = str(data.get("user_id") or "").strip()
+            account = manager.get_account(user_id) if user_id else None
+            if account is None:
+                return jsonify({"ok": False, "error": "Account not found"}), 404
+            if not is_owner and str(account.get("owner") or "") != requester_id:
+                return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+            if action == "enable":
+                ok, message = manager.enable_account(user_id, requester_id=None if is_owner else requester_id)
+            elif action == "disable":
+                ok, message = manager.disable_account(user_id, requester_id=None if is_owner else requester_id)
+            elif action == "remove":
+                ok, message = manager.unregister_user(user_id, str(account.get("owner") or requester_id))
+            elif action == "prefix":
+                prefix = str(data.get("prefix") or "").strip()[:5]
+                if not prefix:
+                    return jsonify({"ok": False, "error": "Prefix is required"}), 400
+                ok, message = manager.update_prefix(user_id, prefix)
+            else:
+                return jsonify({"ok": False, "error": "Unsupported action"}), 400
+            return jsonify({"ok": bool(ok), "message": message}), (200 if ok else 400)
 
         @self.app.get("/api/config")
         def api_config_get() -> Any:
@@ -2381,6 +2675,26 @@ class WebPanel:
         def api_rpc_get() -> Any:
             if not self._require_session():
                 return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            if target:
+                runtime_state = self._read_hosted_runtime_state(target)
+                runtime_rpc = runtime_state.get("rpc", {})
+                status = self._read_hosted_rpc_status(target)
+                activity = runtime_rpc.get("activity") if isinstance(runtime_rpc, dict) else None
+                if not isinstance(activity, dict):
+                    activity = status.get("activity") if isinstance(status.get("activity"), dict) else None
+                return jsonify({
+                    "ok": True,
+                    "active": isinstance(activity, dict),
+                    "activity": activity,
+                    "mode": runtime_rpc.get("mode", "none") if isinstance(runtime_rpc, dict) else "none",
+                    "saved_at": runtime_rpc.get("saved_at") if isinstance(runtime_rpc, dict) else None,
+                    "rotation_running": bool(status.get("rotation_running")),
+                    "version": "v2",
+                    "available_types": [0, 1, 2, 3, 5],
+                })
             b = self.bot
             activity = getattr(b, "activity", None) if b else None
             runtime_rpc: dict = {}
@@ -2407,11 +2721,19 @@ class WebPanel:
             if not self._require_session():
                 return jsonify({"ok": False, "error": "Unauthorized"}), 403
             data = request.get_json(force=True) or {}
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
             b = self.bot
-            if b is None:
+            if b is None and target is None:
                 return jsonify({"ok": False, "error": "No bot instance"}), 400
             action = data.get("action", "set")
             if action == "stop":
+                if target:
+                    result = self._dispatch_hosted_rpc(target, "stop")
+                    if not result.get("ok"):
+                        return jsonify(result), 503
+                    return jsonify({"ok": True, "action": "stopped"})
                 try:
                     apply_activity = getattr(b, "_rpc_apply_activity", None)
                     if callable(apply_activity):
@@ -2477,6 +2799,12 @@ class WebPanel:
                     if isinstance(si, str) and si:
                         assets["small_image"] = self._normalize_rpc_asset_key(si, app_id)
                     activity["assets"] = assets
+
+                if target:
+                    result = self._dispatch_hosted_rpc(target, "set", activity)
+                    if not result.get("ok"):
+                        return jsonify(result), 503
+                    return jsonify({"ok": True, "action": "set", "activity": result.get("activity") or activity})
                 
                 apply_activity = getattr(b, "_rpc_apply_activity", None)
                 if callable(apply_activity):
@@ -2491,18 +2819,28 @@ class WebPanel:
         def api_rpc_profiles_get() -> Any:
             if not self._require_session():
                 return jsonify({"ok": False, "error": "Unauthorized"}), 403
-            runtime_rpc = {}
-            try:
-                with open(os.path.join(self._base_dir, "runtime_state.json"), "r", encoding="utf-8") as state_file:
-                    runtime_rpc = json.load(state_file).get("rpc", {})
-            except Exception:
-                pass
-            rotation_state = getattr(self.bot, "_rpc_rotation_state", {}) if self.bot else {}
-            rotation_running = bool(rotation_state.get("running")) if isinstance(rotation_state, dict) else False
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            store = self._rpc_profile_store_for_target(target)
+            if store is None:
+                return jsonify({"ok": False, "error": "RPC profile store is unavailable"}), 503
+            if target:
+                runtime_rpc = self._read_hosted_runtime_state(target).get("rpc", {})
+                rotation_running = bool(self._read_hosted_rpc_status(target).get("rotation_running"))
+            else:
+                runtime_rpc = {}
+                try:
+                    with open(os.path.join(self._base_dir, "runtime_state.json"), "r", encoding="utf-8") as state_file:
+                        runtime_rpc = json.load(state_file).get("rpc", {})
+                except Exception:
+                    pass
+                rotation_state = getattr(self.bot, "_rpc_rotation_state", {}) if self.bot else {}
+                rotation_running = bool(rotation_state.get("running")) if isinstance(rotation_state, dict) else False
             return jsonify({
                 "ok": True,
-                "presets": sorted(self._rpc_profile_store.list_presets(), key=str.casefold),
-                "rotation": self._rpc_profile_store.get_rotation(),
+                "presets": sorted(store.list_presets(), key=str.casefold),
+                "rotation": store.get_rotation(),
                 "rotation_running": rotation_running,
             })
 
@@ -2515,23 +2853,43 @@ class WebPanel:
                 return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
             action = str(data.get("action") or "").strip().lower()
             name = str(data.get("name") or "").strip()
-            b = self.bot
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            store = self._rpc_profile_store_for_target(target)
+            if store is None:
+                return jsonify({"ok": False, "error": "RPC profile store is unavailable"}), 503
+            b = self.bot if target is None else None
             try:
                 if action == "save":
-                    activity = getattr(b, "activity", None) if b else None
-                    self._rpc_profile_store.save_preset(name, activity)
+                    if target:
+                        activity = self._read_hosted_runtime_state(target).get("rpc", {}).get("activity")
+                    else:
+                        activity = getattr(b, "activity", None) if b else None
+                    store.save_preset(name, activity)
                 elif action == "load":
-                    apply_preset = getattr(b, "_rpc_apply_preset", None) if b else None
-                    if not callable(apply_preset):
-                        return jsonify({"ok": False, "error": "RPC profile controls are unavailable"}), 503
-                    loaded, result = apply_preset(b, name)
-                    if not loaded:
-                        return jsonify({"ok": False, "error": result}), 404
+                    activity = store.get_preset(name)
+                    if not activity:
+                        return jsonify({"ok": False, "error": "RPC preset was not found"}), 404
+                    if target:
+                        result = self._dispatch_hosted_rpc(target, "set", activity)
+                        if not result.get("ok"):
+                            return jsonify(result), 503
+                    else:
+                        apply_preset = getattr(b, "_rpc_apply_preset", None) if b else None
+                        if not callable(apply_preset):
+                            return jsonify({"ok": False, "error": "RPC profile controls are unavailable"}), 503
+                        loaded, result = apply_preset(b, name)
+                        if not loaded:
+                            return jsonify({"ok": False, "error": result}), 404
                 elif action == "delete":
-                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
-                    if callable(stop_rotation):
-                        stop_rotation(b, resume_keepalive=True)
-                    if not self._rpc_profile_store.delete_preset(name):
+                    if target:
+                        self._dispatch_hosted_rpc(target, "rotation_stop")
+                    else:
+                        stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                        if callable(stop_rotation):
+                            stop_rotation(b, resume_keepalive=True)
+                    if not store.delete_preset(name):
                         return jsonify({"ok": False, "error": "RPC preset was not found"}), 404
                 else:
                     return jsonify({"ok": False, "error": "Action must be save, load, or delete"}), 400
@@ -2539,7 +2897,7 @@ class WebPanel:
                 return jsonify({"ok": False, "error": str(e)}), 400
             except Exception as e:
                 return jsonify({"ok": False, "error": str(e)}), 500
-            return jsonify({"ok": True, "action": action, "presets": sorted(self._rpc_profile_store.list_presets(), key=str.casefold)})
+            return jsonify({"ok": True, "action": action, "presets": sorted(store.list_presets(), key=str.casefold)})
 
         @self.app.post("/api/rpc/profiles/rotation")
         def api_rpc_rotation_action() -> Any:
@@ -2549,27 +2907,49 @@ class WebPanel:
             if not isinstance(data, dict):
                 return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
             action = str(data.get("action") or "").strip().lower()
-            b = self.bot
+            target = self._current_hosted_rpc_target()
+            if target and target.get("error"):
+                return jsonify({"ok": False, "error": target["error"]}), 409
+            store = self._rpc_profile_store_for_target(target)
+            if store is None:
+                return jsonify({"ok": False, "error": "RPC profile store is unavailable"}), 503
+            b = self.bot if target is None else None
             try:
                 if action == "set":
-                    rotation = self._rpc_profile_store.set_rotation(data.get("presets"), data.get("interval"))
+                    rotation = store.set_rotation(data.get("presets"), data.get("interval"))
                 elif action == "start":
-                    start_rotation = getattr(b, "_rpc_start_rotation", None) if b else None
-                    if not callable(start_rotation):
-                        return jsonify({"ok": False, "error": "RPC rotation controls are unavailable"}), 503
-                    started, result = start_rotation(b)
-                    if not started:
-                        return jsonify({"ok": False, "error": result}), 400
-                    rotation = self._rpc_profile_store.get_rotation()
+                    if target:
+                        result = self._dispatch_hosted_rpc(target, "rotation_start")
+                        if not result.get("ok"):
+                            return jsonify(result), 400
+                    else:
+                        start_rotation = getattr(b, "_rpc_start_rotation", None) if b else None
+                        if not callable(start_rotation):
+                            return jsonify({"ok": False, "error": "RPC rotation controls are unavailable"}), 503
+                        started, result = start_rotation(b)
+                        if not started:
+                            return jsonify({"ok": False, "error": result}), 400
+                    rotation = store.get_rotation()
                 elif action == "stop":
-                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
-                    stopped = bool(stop_rotation(b, resume_keepalive=True)) if callable(stop_rotation) else False
-                    rotation = self._rpc_profile_store.get_rotation()
+                    if target:
+                        result = self._dispatch_hosted_rpc(target, "rotation_stop")
+                        if not result.get("ok"):
+                            return jsonify(result), 503
+                    else:
+                        stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                        if callable(stop_rotation):
+                            stop_rotation(b, resume_keepalive=True)
+                    rotation = store.get_rotation()
                 elif action == "clear":
-                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
-                    if callable(stop_rotation):
-                        stop_rotation(b, resume_keepalive=True)
-                    self._rpc_profile_store.clear_rotation()
+                    if target:
+                        result = self._dispatch_hosted_rpc(target, "rotation_stop")
+                        if not result.get("ok"):
+                            return jsonify(result), 503
+                    else:
+                        stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                        if callable(stop_rotation):
+                            stop_rotation(b, resume_keepalive=True)
+                    store.clear_rotation()
                     rotation = None
                 else:
                     return jsonify({"ok": False, "error": "Action must be set, start, stop, or clear"}), 400
@@ -2703,40 +3083,46 @@ class WebPanel:
                 return jsonify({"ok": False, "error": "Unauthorized"}), 403
             try:
                 from host import host_manager as hm
-                active = {}
-                saved = {}
-                try:
+                with hm.lock:
                     active = dict(getattr(hm, "active_tokens", {}) or {})
-                except Exception:
-                    pass
-                try:
                     saved = dict(getattr(hm, "saved_users", {}) or {})
-                except Exception:
-                    pass
+                    processes = dict(getattr(hm, "processes", {}) or {})
 
                 requester_id = str(session.get("user_id") or "")
                 is_admin = self._require_admin()
+                is_owner = self._is_owner_session()
                 result = []
                 for tid, info in saved.items():
-                    owner = str(info.get("owner", ""))
-                    if not is_admin and owner != requester_id:
+                    owner = str(info.get("owner") or info.get("owner_id") or "")
+                    if not is_owner and owner != requester_id:
                         continue
 
-                    is_active = tid in active
+                    process = processes.get(tid)
+                    try:
+                        process_running = tid in active and process is not None and process.poll() is None
+                    except Exception:
+                        process_running = False
                     active_info = active.get(tid, {}) if isinstance(active.get(tid, {}), dict) else {}
+                    gateway_status = self._hosted_gateway_status(tid)
+                    connected = process_running and bool(gateway_status.get("connected"))
                     result.append({
                         "token_id": tid[:8] + "...",
                         "token_ref": tid,
-                        "owner": (owner or "—") if is_admin else "self",
+                        "owner": (owner or "—") if is_owner else "self",
                         "user_id": str(info.get("user_id", "—")),
                         "prefix": str(info.get("prefix", "$")),
                         "username": str(info.get("username", "—")),
                         "client_type": str(active_info.get("client_type") or info.get("client_type") or "unknown"),
-                        "active": is_active,
+                        "active": process_running,
+                        "process_running": process_running,
+                        "connected": connected,
+                        "identified": bool(gateway_status.get("identified")),
+                        "connection_error": str(gateway_status.get("connection_error") or ""),
                         "connected_at": int(active_info.get("connected_at") or 0),
                     })
-                active_count = sum(1 for item in result if item.get("active"))
-                return jsonify({"ok": True, "hosted": result, "total": len(result), "active_count": active_count, "is_admin": is_admin})
+                connected_count = sum(1 for item in result if item.get("connected"))
+                process_count = sum(1 for item in result if item.get("process_running"))
+                return jsonify({"ok": True, "hosted": result, "total": len(result), "active_count": connected_count, "process_count": process_count, "starting_count": process_count - connected_count, "is_admin": is_admin, "is_owner": is_owner})
             except Exception as e:
                 return jsonify({"ok": True, "hosted": [], "total": 0, "active_count": 0, "note": str(e)})
 
@@ -2812,6 +3198,8 @@ class WebPanel:
 
         @self.app.post("/api/hosted/disconnect")
         def api_hosted_disconnect():
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             data = request.get_json(force=True) or {}
             token_id = str(data.get("token_id", "")).replace("...", "")
             if not token_id:
@@ -2819,16 +3207,22 @@ class WebPanel:
             try:
                 from host import host_manager as hm
                 requester_id = str(session.get("user_id") or "")
-                is_admin = self._require_admin()
-                if not is_admin:
-                    saved = dict(getattr(hm, "saved_users", {}) or {})
+                is_owner = self._is_owner_session()
+                if not is_owner:
+                    with hm.lock:
+                        saved = dict(getattr(hm, "saved_users", {}) or {})
                     entry = saved.get(token_id) or {}
-                    if str(entry.get("owner", "")) != requester_id:
+                    owner = str(entry.get("owner") or entry.get("owner_id") or "")
+                    if owner != requester_id:
                         return jsonify({"ok": False, "error": "Forbidden"}), 403
                 # Use remove_hosts to disconnect hosted user by token_id
                 removed = 0
                 if hasattr(hm, "remove_hosts"):
-                    removed = hm.remove_hosts(selectors=[token_id])
+                    removed = hm.remove_hosts(
+                        requester_id=None if is_owner else requester_id,
+                        selectors=[token_id],
+                        all_hosts=is_owner,
+                    )
                 if removed:
                     return jsonify({"ok": True})
                 else:
@@ -2838,7 +3232,35 @@ class WebPanel:
 
         @self.app.post("/api/hosted/restart")
         def api_hosted_restart():
-            return jsonify({"ok": False, "error": "Restart is disabled on the website. Remove and reconnect instead."}), 403
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            data = request.get_json(force=True) or {}
+            token_id = str(data.get("token_id", "")).replace("...", "").strip()
+            if not token_id:
+                return jsonify({"ok": False, "error": "token_id required"}), 400
+            try:
+                from host import host_manager as hm
+
+                requester_id = str(session.get("user_id") or "")
+                is_owner = self._is_owner_session()
+                if not is_owner:
+                    with hm.lock:
+                        saved = dict(getattr(hm, "saved_users", {}) or {})
+                    entry = saved.get(token_id) or {}
+                    owner = str(entry.get("owner") or entry.get("owner_id") or "")
+                    if owner != requester_id:
+                        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+                restarted = hm.restart_hosts(
+                    requester_id=None if is_owner else requester_id,
+                    selectors=[token_id],
+                    all_hosts=is_owner,
+                )
+                if restarted:
+                    return jsonify({"ok": True, "message": "Instance restart requested"})
+                return jsonify({"ok": False, "error": "Could not restart instance. Check its runtime log."}), 400
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
 
         # ── Logs ──────────────────────────────────────────────────────────
         @self.app.get("/api/logs")
@@ -2938,10 +3360,19 @@ class WebPanel:
             
             try:
                 from host import host_manager as hm
-                saved = dict(getattr(hm, "saved_users", {}) or {})
-                active = dict(getattr(hm, "active_tokens", {}) or {})
+                with hm.lock:
+                    saved = dict(getattr(hm, "saved_users", {}) or {})
+                    active = dict(getattr(hm, "active_tokens", {}) or {})
+                    processes = dict(getattr(hm, "processes", {}) or {})
                 hosted_total = len(saved)
-                hosted_active = len(active)
+                hosted_active = sum(
+                    1
+                    for token_id in active
+                    if token_id in processes
+                    and processes[token_id] is not None
+                    and processes[token_id].poll() is None
+                    and self._hosted_gateway_status(token_id).get("connected")
+                )
             except Exception:
                 pass
 

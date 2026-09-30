@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Aria - Support</title>
+  <title>Aria</title>
   <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
   <link rel="apple-touch-icon" href="/static/images/aria-favicon.png" />
   <link rel="stylesheet" href="/static/css/panel_pages.css" />
@@ -15,7 +15,7 @@
       <div class="nav-links">
         <a href="/home">Home</a>
         <a href="/support">Support</a>
-        <a href="/dashboard">Dashboard</a>
+        <a href="/login">Sign in</a>
         <a href="/logout">Logout</a>
       </div>
     </nav>
@@ -46,7 +46,7 @@
           </div>
           <div class="actions">
             <button class="btn btn-primary" type="button" onclick="sendSupportMessage()">Send</button>
-            <a class="btn btn-ghost" href="/dashboard">Back Dashboard</a>
+            <a class="btn btn-ghost" href="/login?next=/dashboard">Open workspace</a>
           </div>
         </div>
       </div>
@@ -122,7 +122,12 @@
           body: JSON.stringify({ message }),
         });
         const data = await r.json();
-        if (!data || !data.ok) return;
+        if (!r.ok || !data || !data.ok) {
+          const hint = document.getElementById('supportStatusHint');
+          if (hint) hint.textContent = (data && data.error) || 'Could not send message';
+          return;
+        }
+        sessionStorage.removeItem('ariaPendingSupportMessage');
         input.value = '';
         fetchSupportMessages();
       } catch (_) {}
@@ -133,6 +138,11 @@
       _supportRefresh = setInterval(fetchSupportMessages, 5000);
 
       const input = document.getElementById('supportMessage');
+      const pendingMessage = sessionStorage.getItem('ariaPendingSupportMessage');
+      if (input && pendingMessage) {
+        input.value = pendingMessage;
+        sendSupportMessage();
+      }
       if (input) {
         input.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.shiftKey) {

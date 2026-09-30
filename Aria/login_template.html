@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Aria Login</title>
+  <title>Aria</title>
   <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
   <link rel="apple-touch-icon" href="/static/images/aria-favicon.png" />
   <link rel="stylesheet" href="/static/css/panel_pages.css" />
@@ -52,12 +52,17 @@
             <form class="form" method="post" action="/login?mode=__MODE__">
               <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
               <div class="field">
-                <label>Username</label>
-                <input type="text" name="username" placeholder="Your username" autocomplete="username" required />
+                <label>Aria Username</label>
+                <input type="text" name="username" placeholder="Your Aria username" autocomplete="username" required />
               </div>
 
               <div class="field">
-                <label>Password</label>
+                <label>Discord ID</label>
+                <input type="text" name="discord_id" placeholder="Your Discord user ID" inputmode="numeric" pattern="[0-9]{15,22}" maxlength="22" autocomplete="off" required />
+              </div>
+
+              <div class="field">
+                <label>Aria Password</label>
                 <div class="password-input-wrap">
                   <input type="password" id="loginPasswordInput" name="password" placeholder="Password" autocomplete="current-password" required />
                   <button type="button" class="password-toggle-icon" onclick="togglePasswordField('loginPasswordInput', this)" aria-label="Show password" title="Show password">
@@ -89,7 +94,7 @@
           <div class="aside-card">
             <div class="eyebrow">Before You Enter</div>
             <ul class="aside-list">
-              <li><strong>One account</strong> Sign in with the username you chose during registration.</li>
+              <li><strong>Match your instance</strong> Regular accounts use their Discord ID to open the corresponding connected instance.</li>
               <li><strong>Link once</strong> New accounts connect an instance before opening the dashboard.</li>
               <li><strong>Fast return</strong> Remembered sessions reduce friction when you come back.</li>
             </ul>

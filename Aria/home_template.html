@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Aria</title>
+  <title>Aria | Self-Automation Tool</title>
   <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
   <link rel="apple-touch-icon" href="/static/images/aria-favicon.png" />
   <link rel="stylesheet" href="/static/css/panel_pages.css" />
@@ -23,7 +23,6 @@
         <a href="/features">Features</a>
         <a href="/signup">Sign up</a>
         <a href="/login">Sign in</a>
-        <a href="/dashboard">Dashboard</a>
       </div>
     </nav>
 
@@ -124,7 +123,7 @@
           </div>
         </div>
         <div class="home-demo-actions"><button type="button">Open player</button><button type="button">View profile</button></div>
-        <div class="home-demo-code"><code>.rpc set "Afterglow" "Aria Radio"</code><span>EXAMPLE</span></div>
+        <div class="home-demo-code"><code>$rpc set "Afterglow" "Aria Radio"</code><span>EXAMPLE</span></div>
       </div>
     </section>
 
@@ -154,8 +153,8 @@
         <a class="home-feature-item" href="/login?next=/dashboard">
           <span class="home-feature-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="6" height="6" rx="1"/><rect x="11.5" y="3" width="6" height="6" rx="1"/><rect x="2.5" y="11" width="6" height="6" rx="1"/><rect x="11.5" y="11" width="6" height="6" rx="1"/></svg></span>
           <span class="home-feature-num">01 / WORKSPACE</span>
-          <h3>Dashboard</h3>
-          <p>Open the live control surface for your connected runtime.</p>
+          <h3>Workspace</h3>
+          <p>Sign in to open the live control surface for your connected runtime.</p>
           <span class="home-feature-link">Enter workspace <span aria-hidden="true">↗</span></span>
         </a>
         <a class="home-feature-item" href="/features">
@@ -206,7 +205,7 @@
       <strong>Support</strong>
       <button class="home-support-pop-close" type="button" aria-label="Close support menu" onclick="toggleHomeSupport(false)">×</button>
     </div>
-    <p class="home-support-pop-sub">Pick a quick message, then copy it for support.</p>
+    <p class="home-support-pop-sub">Send a message to your separate support inbox.</p>
     <div class="home-support-quick-row">
       <button type="button" class="home-support-chip" onclick="setSupportMessage('I need help with access approval for my account.')">Access Help</button>
       <button type="button" class="home-support-chip" onclick="setSupportMessage('I need help getting or using my token page instructions.')">Token Help</button>
@@ -214,8 +213,8 @@
     </div>
     <textarea id="homeSupportMessage" class="home-support-input" placeholder="Type your message to support..."></textarea>
     <div class="home-support-actions">
-      <button type="button" class="btn btn-ghost" onclick="copySupportMessage()">Copy Message</button>
-      <a class="btn btn-primary" href="/login?next=/support">Open Support</a>
+      <span id="homeSupportStatus" role="status" aria-live="polite"></span>
+      <button type="button" class="btn btn-primary" id="homeSupportSend" onclick="sendHomeSupportMessage()">Send</button>
     </div>
   </div>
 
@@ -235,22 +234,40 @@
       input.focus();
     }
 
-    function copySupportMessage() {
+    async function sendHomeSupportMessage() {
       const input = document.getElementById('homeSupportMessage');
-      if (!input) return;
+      const status = document.getElementById('homeSupportStatus');
+      const button = document.getElementById('homeSupportSend');
+      if (!input || !button) return;
       const value = (input.value || '').trim();
       if (!value) return;
-
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(value).catch(() => {});
-        return;
-      }
-
-      input.select();
+      button.disabled = true;
+      button.textContent = 'Sending...';
       try {
-        document.execCommand('copy');
-      } catch (_) {}
-      input.setSelectionRange(input.value.length, input.value.length);
+        const response = await fetch('/api/support/message', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: value }),
+        });
+        const data = await response.json();
+        if (response.status === 403) {
+          sessionStorage.setItem('ariaPendingSupportMessage', value);
+          window.location.href = '/login?next=%2Fsupport';
+          return;
+        }
+        if (!response.ok || !data || !data.ok) {
+          if (status) status.textContent = (data && data.error) || 'Message could not be sent.';
+          return;
+        }
+        sessionStorage.removeItem('ariaPendingSupportMessage');
+        window.location.href = '/support';
+      } catch (_) {
+        if (status) status.textContent = 'Network error. Please try again.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Send';
+      }
     }
 
     document.addEventListener('DOMContentLoaded', () => {

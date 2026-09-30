@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="__CSRF_TOKEN__">
-    <title>Aria Dashboard</title>
+    <title>Aria</title>
     <link rel="icon" type="image/png" href="/static/images/aria-favicon.png">
     <link rel="shortcut icon" type="image/png" href="/static/images/aria-favicon.png">
     <link rel="apple-touch-icon" href="/static/images/aria-favicon.png">
@@ -66,6 +66,22 @@
                 Feed
             </li>
             <li class="nav-group-label" aria-hidden="true">Account</li>
+            <li class="nav-item" data-section="account">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="6.5" r="3"/><path d="M3.5 17c.6-3.2 2.7-4.8 6.5-4.8s5.9 1.6 6.5 4.8"/></svg>
+                Account
+            </li>
+            <li class="nav-item" data-section="friends">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3"/><path d="M1.5 17c.5-3 2.3-4.5 5.5-4.5 1.2 0 2.2.2 3 .7M13 5.5a2.5 2.5 0 010 5M13 13c3 0 4.8 1.4 5.5 4"/></svg>
+                Friends
+            </li>
+            <li class="nav-item" data-section="selfHosted">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="6" rx="1.5"/><rect x="2" y="11" width="16" height="6" rx="1.5"/><path d="M5 6h.01M5 14h.01M9 6h5M9 14h5"/></svg>
+                Self-hosting
+            </li>
+            <li class="nav-item" data-section="users">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L4 5v5c0 3.5 2.5 6.3 6 7.3 3.5-1 6-3.8 6-7.3V5l-6-3z"/></svg>
+                Access
+            </li>
             <li class="nav-item" data-section="logger">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h14v10H8l-5 3V4z"/><path d="M6 7h8M6 10h5"/></svg>
                 Message Log
@@ -86,10 +102,10 @@
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="6" rx="1.5"/><rect x="2" y="11" width="16" height="6" rx="1.5"/><circle cx="15.5" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14" r="1" fill="currentColor" stroke="none"/></svg>
                 Instances
             </li>
-            <li class="nav-group-label" aria-hidden="true">Administration</li>
-            <li class="nav-item" data-section="owner" data-owner-only="true" hidden>
-                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l6 3v5c0 3.5-2.5 6.3-6 8-3.5-1.7-6-4.5-6-8V5l6-3z"/><path d="M7.5 10l1.7 1.7 3.5-3.5"/></svg>
-                Owner Panel
+            <li class="nav-group-label" aria-hidden="true" data-admin-only="true">Administration</li>
+            <li class="nav-item" data-section="administration" data-admin-only="true">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16.5h14M5 13l3-3 2 2 5-5"/><circle cx="15" cy="7" r="1.2"/></svg>
+                Administration
             </li>
             <li class="nav-item" data-section="chat" data-admin-only="true">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h16v10H4l-2 3v-3z"/><circle cx="5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1" fill="currentColor" stroke="none"/></svg>
@@ -99,13 +115,14 @@
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M6 9l2 2 4-4"/></svg>
                 Runtime
             </li>
-            <li class="nav-item" data-section="users">
-                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L4 5v5c0 3.5 2.5 6.3 6 7.3 3.5-1 6-3.8 6-7.3V5l-6-3z"/></svg>
-                Access
-            </li>
             <li class="nav-item" data-section="settings" data-admin-only="true">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 2v2m0 12v2M2 10h2m12 0h2m-3.17-4.83l-1.42 1.42M4.59 15.41l1.42-1.42M15.41 15.41l-1.42-1.42M5.17 5.17L6.59 6.59"/></svg>
                 Config
+            </li>
+            <li class="nav-group-label" aria-hidden="true" data-owner-only="true" hidden>Owner</li>
+            <li class="nav-item" data-section="owner" data-owner-only="true" hidden>
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l6 3v5c0 3.5-2.5 6.3-6 8-3.5-1.7-6-4.5-6-8V5l6-3z"/><path d="M7.5 10l1.7 1.7 3.5-3.5"/></svg>
+                Owner Panel
             </li>
         </ul>
 
@@ -145,7 +162,7 @@
                     <div class="status-dot" id="globalStatus"></div>
                     <span class="status-label" id="globalStatusLabel">Loading&hellip;</span>
                 </div>
-                <div class="topbar-user-chip" id="topbarUserChip" onclick="navigateTo('users')">
+                <div class="topbar-user-chip" id="topbarUserChip" onclick="navigateTo('account')">
                     <img class="topbar-user-avatar" id="topbarAvatar" src="/static/images/aria-favicon.png" alt="">
                     <span class="topbar-user-name" id="topbarUsername">&mdash;</span>
                 </div>
@@ -176,7 +193,7 @@
                     <div class="hero-info">
                         <div class="hero-name-row">
                             <div class="hero-title" id="heroDashboardTitle">—</div>
-                            <span class="hero-badge-pill prefix mono" id="heroBadgePrefix">.</span>
+                            <span class="hero-badge-pill prefix mono" id="heroBadgePrefix">$</span>
                         </div>
                         <div class="hero-id-line mono" id="heroUserId">—</div>
                         <div class="hero-badges">
@@ -436,6 +453,37 @@
             </div>
         </section>
 
+        <section class="section" id="section-administration" data-admin-only="true">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Administration</div>
+                    <div class="section-sub">Operational controls and service health</div>
+                </div>
+                <span class="table-badge">operator</span>
+            </div>
+            <div class="admin-hub-status">
+                <div class="admin-hub-intro">
+                    <span class="admin-hub-kicker">CONTROL PLANE / LIVE</span>
+                    <strong>Keep the runtime in view.</strong>
+                    <span>Current gateway and command state, with direct access to each operations surface.</span>
+                </div>
+                <div class="admin-hub-metrics">
+                    <div><span>Gateway</span><strong id="adminGatewayState">Loading</strong></div>
+                    <div><span>Commands</span><strong id="adminCommandCount">—</strong></div>
+                    <div><span>Prefix</span><strong id="adminPrefix">$</strong></div>
+                    <div><span>Runtime</span><strong id="adminUptime">—</strong></div>
+                </div>
+            </div>
+            <div class="admin-hub-grid">
+                <button class="admin-hub-link" type="button" onclick="navigateTo('analytics')"><span>01 / TELEMETRY</span><strong>Execution health</strong><small>Command totals, success rate, and response time</small></button>
+                <button class="admin-hub-link" type="button" onclick="navigateTo('logs')"><span>02 / RUNTIME</span><strong>Runtime events</strong><small>Gateway, command, and error feeds</small></button>
+                <button class="admin-hub-link" type="button" onclick="navigateTo('chat')"><span>03 / SUPPORT</span><strong>Support inbox</strong><small>Review and respond to user conversations</small></button>
+                <button class="admin-hub-link" type="button" onclick="navigateTo('users')"><span>04 / ACCESS</span><strong>Account access</strong><small>Review users, credentials, and requests</small></button>
+                <button class="admin-hub-link" type="button" onclick="navigateTo('hosted')"><span>05 / INSTANCES</span><strong>Hosted instances</strong><small>Inspect connected runtimes</small></button>
+                <button class="admin-hub-link" type="button" onclick="navigateTo('settings')"><span>06 / CONFIG</span><strong>Runtime config</strong><small>Adjust the active command and status settings</small></button>
+            </div>
+        </section>
+
         <!-- ══════════════════════════════════════════════
              COMMANDS
         ══════════════════════════════════════════════ -->
@@ -518,6 +566,124 @@
                 </div>
                 <div class="history-feed" id="historyFeed">
                     <div class="log-loading">Loading…</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="section-account">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Account</div>
+                    <div class="section-sub">Your Aria identity and active runtime link</div>
+                </div>
+                <span class="table-badge" id="accountRoleBadge">account</span>
+            </div>
+            <div class="account-identity-hero">
+                <div class="account-avatar-frame">
+                    <img id="accountAvatar" src="/static/images/aria-favicon.png" alt="">
+                    <i id="accountConnectionDot" aria-hidden="true"></i>
+                </div>
+                <div class="account-identity-copy">
+                    <span class="account-kicker">CONNECTED IDENTITY</span>
+                    <strong id="accountUsername">Loading account…</strong>
+                    <code id="accountUserId">—</code>
+                </div>
+                <div class="account-live-state"><span>CLIENT STATUS</span><strong id="accountConnection">Checking runtime</strong></div>
+                <div class="account-instance-state"><span>INSTANCE</span><strong id="accountInstance">—</strong></div>
+            </div>
+            <div class="account-data-layout">
+                <section class="account-data-panel" aria-label="Account details">
+                    <div class="account-panel-heading"><span>ACCOUNT</span><span id="accountRoleBadge">member</span></div>
+                    <div class="account-data-row"><span>Role</span><strong id="accountRole">—</strong></div>
+                    <div class="account-data-row"><span>Member since</span><strong id="accountCreatedAt">—</strong></div>
+                    <div class="account-data-row"><span>Last sign in</span><strong id="accountLastLogin">—</strong></div>
+                    <div class="account-data-row"><span>Last seen</span><strong id="accountLastSeen">—</strong></div>
+                </section>
+                <section class="account-runtime-panel" aria-label="Hosted client details">
+                    <div class="account-panel-heading"><span>HOSTED CLIENT</span><i></i></div>
+                    <div class="account-runtime-grid">
+                        <div><span>Client</span><strong id="accountClientType">—</strong></div>
+                        <div><span>Prefix</span><strong id="accountPrefix">$</strong></div>
+                        <div><span>Gateway</span><strong id="accountLatency">—</strong></div>
+                        <div><span>Uptime</span><strong id="accountUptime">—</strong></div>
+                    </div>
+                    <div class="account-actions">
+                        <button class="btn btn-primary" type="button" onclick="navigateTo('hosted')">Manage instance</button>
+                        <button class="btn btn-ghost" type="button" onclick="navigateTo('users')">Access &amp; security</button>
+                        <a class="btn btn-ghost" href="/support">Support inbox</a>
+                    </div>
+                </section>
+            </div>
+        </section>
+
+        <section class="section" id="section-friends">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Friend Directory</div>
+                    <div class="section-sub">Friend identities synced by the enhanced scraper</div>
+                </div>
+                <button class="btn btn-ghost" type="button" onclick="loadFriends()">Refresh</button>
+            </div>
+            <div class="cards-grid cards-grid-hosted">
+                <div class="card"><div class="card-label">Friends</div><div class="card-value" id="friendsTotal">—</div></div>
+            </div>
+            <div class="table-card">
+                <div class="table-header"><span class="table-title">Friend Accounts</span><span class="table-badge" id="friendsBadge">—</span></div>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead><tr><th>Username</th><th>User ID</th><th>Account</th></tr></thead>
+                        <tbody id="friendsBody"><tr><td colspan="3" class="empty-row">Loading…</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="section-selfHosted">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Self-hosted Accounts</div>
+                    <div class="section-sub">Manage registration, account status, and command prefixes</div>
+                </div>
+                <span class="table-badge" id="selfHostedBadge">—</span>
+            </div>
+            <div class="settings-panel settings-panel-mb-md">
+                <div class="settings-panel-header"><span class="settings-title">Register Account</span></div>
+                <div class="setting-row">
+                    <div><div class="setting-label">Discord Token</div><div class="setting-sub">Validated before registration; never shown in account lists</div></div>
+                    <div class="setting-controls setting-controls-wide">
+                        <div class="password-input-wrap">
+                            <input type="password" id="selfHostTokenInput" class="setting-input" placeholder="Token" autocomplete="off">
+                            <button class="password-toggle-icon" type="button" onclick="togglePasswordField('selfHostTokenInput', this)" aria-label="Show password" title="Show password">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 10s3-5.5 8.5-5.5S18.5 10 18.5 10s-3 5.5-8.5 5.5S1.5 10 1.5 10z"></path><circle cx="10" cy="10" r="2.5"></circle></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div><div class="setting-label">Prefix</div><div class="setting-sub">Prefix assigned to this account</div></div>
+                    <div class="setting-controls"><input type="text" id="selfHostPrefixInput" class="setting-input small" value=";" maxlength="5"><button class="btn btn-primary" id="selfHostRegisterBtn" type="button" onclick="registerSelfHosted()">Register</button></div>
+                </div>
+                <div class="setting-row" id="selfHostRegistrationRow" hidden>
+                    <div><div class="setting-label">Open Registration</div><div class="setting-sub">Allow dashboard users to register self-hosted accounts</div></div>
+                    <div class="setting-controls"><label class="logger-toggle"><input id="selfHostRegistrationToggle" type="checkbox" onchange="setSelfHostRegistration(this.checked)"><span>Enabled</span></label></div>
+                </div>
+                <div class="setting-row" id="selfHostAuthorizationRow" hidden>
+                    <div><div class="setting-label">Authorized Users</div><div class="setting-sub">Allow selected users to register while open registration is off</div></div>
+                    <div class="setting-controls setting-controls-wide"><input type="text" id="selfHostAuthorizedUserInput" class="setting-input" inputmode="numeric" placeholder="User ID"><button class="btn btn-primary" type="button" onclick="updateSelfHostAuthorization('authorize')">Allow</button></div>
+                </div>
+                <div class="setting-row" id="selfHostAuthorizedUsersRow" hidden>
+                    <div><div class="setting-label">Allowed User IDs</div></div>
+                    <div class="setting-controls"><div id="selfHostAuthorizedUsers" class="self-host-authorized-list"></div></div>
+                </div>
+                <div class="settings-msg-wrap"><div id="selfHostedActionMsg" class="settings-msg" role="status" aria-live="polite"></div></div>
+            </div>
+            <div class="table-card">
+                <div class="table-header"><span class="table-title">Registered Accounts</span><span class="table-badge" id="selfHostedTotal">0</span></div>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead><tr><th>User ID</th><th>Owner</th><th>Prefix</th><th>Status</th><th>Registered</th><th>Actions</th></tr></thead>
+                        <tbody id="selfHostedBody"><tr><td colspan="6" class="empty-row">Loading…</td></tr></tbody>
+                    </table>
                 </div>
             </div>
         </section>
@@ -695,6 +861,12 @@
                     </div>
                 </div>
                 <div class="rpc-profile-feedback" id="rpcProfileMsg" role="status" aria-live="polite"></div>
+            </div>
+
+            <div class="rpc-live-client-strip">
+                <div class="rpc-live-client-mark" aria-hidden="true">A</div>
+                <div class="rpc-live-client-copy"><span>ACTIVE CLIENT</span><strong id="rpcClientName">—</strong><code id="rpcClientId">—</code></div>
+                <div class="rpc-live-client-state"><i id="rpcClientStateDot"></i><span id="rpcClientState">Waiting for client</span></div>
             </div>
 
             <!-- ── Two-column layout: Preview left, Builder right ── -->

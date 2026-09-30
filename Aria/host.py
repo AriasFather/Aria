@@ -6,10 +6,51 @@ import os
 import sys
 import shutil
 import logging
+import signal
 from datetime import datetime, timedelta
 
 HOSTED_USERS_FILE = "hosted_users.json"
 logger = logging.getLogger(__name__)
+
+
+def _hosted_process_is_alive(pid, token_id):
+    try:
+        pid = int(pid)
+        os.kill(pid, 0)
+    except (OSError, TypeError, ValueError):
+        return False
+
+    if os.name == "posix":
+        cmdline_path = f"/proc/{pid}/cmdline"
+        if os.path.exists(cmdline_path):
+            try:
+                command_line = open(cmdline_path, "rb").read()
+                if f"hosted_bot_{token_id}".encode() not in command_line:
+                    return False
+                stat = open(f"/proc/{pid}/stat", "r", encoding="utf-8").read()
+                if stat.split(") ", 1)[-1].split()[0] == "Z":
+                    return False
+            except OSError:
+                return False
+    return True
+
+
+class _AttachedHostedProcess:
+    def __init__(self, pid, token_id):
+        self.pid = int(pid)
+        self.token_id = str(token_id)
+
+    def poll(self):
+        return None if _hosted_process_is_alive(self.pid, self.token_id) else 0
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+            time.sleep(0.05)
+        return 0
+
 
 class HostManager:
     def __init__(self):
@@ -94,6 +135,12 @@ class HostManager:
                 return True
         return False
 
+    def _attach_existing_process(self, token_id, data):
+        pid = data.get("pid")
+        if pid and _hosted_process_is_alive(pid, token_id):
+            return _AttachedHostedProcess(pid, token_id)
+        return None
+
     # ------------------------------------------------------------------
 
     def can_use_command(self, user_id):
@@ -164,7 +211,7 @@ class HostManager:
             logger.error("Host token validation failed: %s", exc)
             return False, None
 
-    def host_token(self, owner_id, token_input, prefix=";", user_id=None, username=None):
+    def host_token(self, owner_id, token_input, prefix="$", user_id=None, username=None):
         if not token_input:
             return False, "No token"
 
@@ -210,6 +257,7 @@ class HostManager:
                 "owner": owner_id,
                 "config": config_file,
                 "connected_at": int(time.time()),
+                "pid": process.pid,
             }
             self.active_tokens[token_id] = entry
             self.processes[token_id] = process
@@ -237,20 +285,37 @@ class HostManager:
         
         return token_input if "." in token_input else ""
     
-    def _run_their_bot(self, config_file, token, prefix=";", hosted_uid=None, owner_id=None, user_id=None, username=None):
+    def _run_their_bot(self, config_file, token, prefix="$", hosted_uid=None, owner_id=None, user_id=None, username=None):
         try:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            config_source = os.path.abspath(config_file)
             runner_code = f"""
-import sys, os, json, subprocess, shutil
+import sys, os, json, shutil
 
-SOURCE_ROOT = os.path.dirname(os.path.abspath(__file__))
+SOURCE_ROOT = {project_root!r}
+SOURCE_CONFIG_FILE = {config_source!r}
 TEMP_DIR = os.path.join(SOURCE_ROOT, "hosted_bot_{hosted_uid}")
 SYNC_DIRS = ("cogs", "core", "static", "utils", "web_ui")
-SYNC_FILE_SUFFIXES = (".py", ".json", ".html")
+SYNC_FILE_SUFFIXES = (".py", ".html")
 IGNORE_NAMES = {{"__pycache__", ".git", ".pytest_cache", ".mypy_cache", "hosted_logs", "dist"}}
 
 
 def _should_copy_root_file(file_name):
-    if file_name in {{"config.json"}}:
+    if file_name in {{
+        "config.json",
+        "runtime_state.json",
+        "rpc_profiles.json",
+        "hosted_users.json",
+        "admin_users.json",
+        "authed_users.json",
+        "dashboard_users.json",
+        "dashboard_authed_users.json",
+        "dashboard_blocked_users.json",
+    }}:
+        return False
+    if file_name.startswith("runner_") and file_name.endswith(".py"):
+        return False
+    if file_name.startswith("hosted_") and file_name.endswith((".json", ".log")):
         return False
     return file_name.endswith(SYNC_FILE_SUFFIXES)
 
@@ -285,11 +350,24 @@ def _sync_directory_tree(directory_name):
 
 def _sync_project_tree():
     os.makedirs(TEMP_DIR, exist_ok=True)
+    stale_files = {{
+        "hosted_users.json",
+        "admin_users.json",
+        "authed_users.json",
+        "dashboard_users.json",
+        "dashboard_authed_users.json",
+        "dashboard_blocked_users.json",
+    }}
+    for file_name in os.listdir(TEMP_DIR):
+        if file_name in stale_files or (file_name.startswith("hosted_") and file_name.endswith(".json")) or (file_name.startswith("runner_") and file_name.endswith(".py")):
+            try:
+                os.remove(os.path.join(TEMP_DIR, file_name))
+            except OSError:
+                pass
     _copy_root_files()
     for directory_name in SYNC_DIRS:
         _sync_directory_tree(directory_name)
-    with open(os.path.join(TEMP_DIR, "config.json"), "w", encoding="utf-8") as config_file:
-        json.dump({{"token": {json.dumps(token)}, "prefix": {json.dumps(prefix)}}}, config_file)
+    shutil.copy2(SOURCE_CONFIG_FILE, os.path.join(TEMP_DIR, "config.json"))
 
 
 _sync_project_tree()
@@ -311,25 +389,34 @@ env["HOSTED_UID"] = {hosted_uid!r}
 env["HOSTED_OWNER_ID"] = {owner_id!r}
 env["HOSTED_USER_ID"] = {user_id!r}
 env["HOSTED_USERNAME"] = {username!r}
+env["HOSTED_COMMANDS_FILE"] = os.path.join(SOURCE_ROOT, "hosted_runtime", {("commands_" + str(hosted_uid) + ".json")!r})
+env["HOSTED_RUNTIME_DIR"] = os.path.join(SOURCE_ROOT, "hosted_runtime", {str(hosted_uid)!r})
 
-subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR, env=env)
+if getattr(sys, "frozen", False):
+    os.execvpe(sys.executable, [sys.executable, "--aria-run-script", os.path.join(TEMP_DIR, "main.py")], env)
+else:
+    os.execvpe(sys.executable, [sys.executable, os.path.join(TEMP_DIR, "main.py")], env)
 """
             # Fixed runner filename per token so keepalive restarts work cleanly
-            runner_file = f"runner_{hosted_uid}.py"
+            runner_file = os.path.join(project_root, f"runner_{hosted_uid}.py")
             with open(runner_file, "w") as f:
                 f.write(runner_code)
 
             # Each hosted bot writes to its own log — keeps main console clean
-            log_dir = "hosted_logs"
+            log_dir = os.path.join(project_root, "hosted_logs")
             os.makedirs(log_dir, exist_ok=True)
             log_path = os.path.join(log_dir, f"hosted_{hosted_uid}.log")
             log_file = open(log_path, "a")
 
+            command = [sys.executable, runner_file]
+            if getattr(sys, "frozen", False):
+                command = [sys.executable, "--aria-run-script", runner_file]
             popen_kwargs = {
-                "args": [sys.executable, runner_file],
+                "args": command,
                 "stdout": log_file,
                 "stderr": log_file,
                 "stdin": subprocess.DEVNULL,
+                "cwd": project_root,
             }
             if os.name == "nt":
                 popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -392,7 +479,7 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 new_process = self._run_their_bot(
                     f"hosted_{token_id}.json",
                     token,
-                    prefix=saved.get("prefix", ";"),
+                    prefix=saved.get("prefix", "$"),
                     hosted_uid=token_id,
                     owner_id=saved.get("owner"),
                     user_id=saved.get("user_id"),
@@ -401,14 +488,86 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 if new_process and not stop_event.is_set():
                     with self.lock:
                         self.processes[token_id] = new_process
+                        active = self.active_tokens.get(token_id)
+                        if active is not None:
+                            active["pid"] = new_process.pid
+                        saved = self.saved_users.get(token_id)
+                        if saved is not None:
+                            saved["pid"] = new_process.pid
+                            self._save_users()
                 else:
                     break  # failed to restart — give up silently
 
-        t = threading.Thread(target=_monitor, name=f"keepalive-{token_id}")
+        t = threading.Thread(target=_monitor, name=f"keepalive-{token_id}", daemon=True)
         t.start()
         self._stop_events[token_id] = stop_event
         self._keepalive_threads = getattr(self, '_keepalive_threads', {})
         self._keepalive_threads[token_id] = t
+
+    @staticmethod
+    def _terminate_process(process):
+        if process is None:
+            return
+        process_id = getattr(process, "pid", None)
+        if process_id:
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process_id), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    return
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.killpg(process_id, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=4)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    try:
+                        os.killpg(process_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    return
+                except (OSError, TypeError):
+                    pass
+        try:
+            process.terminate()
+            process.wait(timeout=4)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _cleanup_hosted_instance_files(token_id):
+        token_ref = str(token_id or "").strip()
+        if not token_ref or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in token_ref):
+            return
+
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        working_roots = {project_root, os.path.abspath(os.getcwd())}
+        for root in working_roots:
+            generated_dirs = (
+                os.path.join(root, f"hosted_bot_{token_ref}"),
+                os.path.join(root, "hosted_runtime", token_ref),
+            )
+            for path in generated_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+            generated_files = (
+                os.path.join(root, f"runner_{token_ref}.py"),
+                os.path.join(root, f"hosted_{token_ref}.json"),
+                os.path.join(root, "hosted_logs", f"hosted_{token_ref}.log"),
+                os.path.join(root, "hosted_runtime", f"commands_{token_ref}.json"),
+            )
+            for path in generated_files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
     
     def stop_hosting(self, owner_id):
         # Join keepalive threads for this owner
@@ -433,14 +592,12 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 if stop_event:
                     stop_event.set()
                 if token_id in self.processes:
-                    try:
-                        self.processes[token_id].terminate()
-                    except:
-                        pass
+                    self._terminate_process(self.processes[token_id])
                     del self.processes[token_id]
                 del self.active_tokens[token_id]
                 # Remove from persistent store
                 self.saved_users.pop(token_id, None)
+                self._cleanup_hosted_instance_files(token_id)
                 pass  # stop suppressed — hosted bots have their own logs
             self._save_users()
 
@@ -458,13 +615,11 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 if stop_event:
                     stop_event.set()
                 if token_id in self.processes:
-                    try:
-                        self.processes[token_id].terminate()
-                    except:
-                        pass
+                    self._terminate_process(self.processes[token_id])
                     del self.processes[token_id]
                 del self.active_tokens[token_id]
                 self.saved_users.pop(token_id, None)
+                self._cleanup_hosted_instance_files(token_id)
                 pass  # force-stop suppressed
             self._save_users()
             return count
@@ -482,10 +637,7 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 stop_event.set()
             proc = self.processes.get(token_id)
             if proc:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+                self._terminate_process(proc)
 
         with self.lock:
             self.processes = {}
@@ -497,7 +649,7 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
             if not self._is_token_valid(token):
                 continue
 
-            prefix = data.get("prefix", ";")
+            prefix = data.get("prefix", "$")
             config_file = f"hosted_{token_id}.json"
             process = self._run_their_bot(
                 config_file,
@@ -519,11 +671,16 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 "prefix": prefix,
                 "owner": data.get("owner", ""),
                 "config": config_file,
+                "pid": process.pid,
             }
 
             with self.lock:
                 self.active_tokens[token_id] = entry
                 self.processes[token_id] = process
+                saved = self.saved_users.get(token_id)
+                if saved is not None:
+                    saved["pid"] = process.pid
+                    self._save_users()
 
             self._start_keepalive(token_id)
             restarted += 1
@@ -599,12 +756,10 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                     stop_event.set()
                 proc = self.processes.pop(token_id, None)
                 if proc:
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
+                    self._terminate_process(proc)
                 self.active_tokens.pop(token_id, None)
                 self.saved_users.pop(token_id, None)
+                self._cleanup_hosted_instance_files(token_id)
                 removed += 1
             self._save_users()
 
@@ -662,12 +817,9 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
             if stop_event:
                 stop_event.set()
             if proc:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+                self._terminate_process(proc)
 
-            prefix = saved.get("prefix", ";")
+            prefix = saved.get("prefix", "$")
             config_file = f"hosted_{token_id}.json"
             new_process = self._run_their_bot(
                 config_file,
@@ -690,11 +842,16 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 "owner": saved.get("owner", ""),
                 "config": config_file,
                 "connected_at": int(time.time()),
+                "pid": new_process.pid,
             }
 
             with self.lock:
                 self.active_tokens[token_id] = entry
                 self.processes[token_id] = new_process
+                saved_entry = self.saved_users.get(token_id)
+                if saved_entry is not None:
+                    saved_entry["pid"] = new_process.pid
+                    self._save_users()
 
             self._start_keepalive(token_id)
             restarted += 1
@@ -718,12 +875,10 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                     stop_event.set()
                 proc = self.processes.pop(token_id, None)
                 if proc:
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
+                    self._terminate_process(proc)
                 self.active_tokens.pop(token_id, None)
                 removed_entry = self.saved_users.pop(token_id, None) or entry
+                self._cleanup_hosted_instance_files(token_id)
                 self._save_users()
 
             removed.append({
@@ -774,17 +929,19 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                     if token_active:
                         continue
 
-                prefix = data.get("prefix", ";")
+                prefix = data.get("prefix", "$")
                 config_file = f"hosted_{token_id}.json"
-                process = self._run_their_bot(
-                    config_file,
-                    token,
-                    prefix=prefix,
-                    hosted_uid=data.get("uid") or token_id,
-                    owner_id=data.get("owner"),
-                    user_id=data.get("user_id"),
-                    username=data.get("username"),
-                )
+                process = self._attach_existing_process(token_id, data)
+                if process is None:
+                    process = self._run_their_bot(
+                        config_file,
+                        token,
+                        prefix=prefix,
+                        hosted_uid=data.get("uid") or token_id,
+                        owner_id=data.get("owner"),
+                        user_id=data.get("user_id"),
+                        username=data.get("username"),
+                    )
                 if not process:
                     continue
 
@@ -796,13 +953,17 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                     "prefix": prefix,
                     "owner": data.get("owner", ""),
                     "config": config_file,
-                    "connected_at": int(time.time()),
-                    "connected_at": int(time.time()),
+                    "connected_at": data.get("connected_at") or int(time.time()),
+                    "pid": process.pid,
                 }
 
                 with self.lock:
                     self.active_tokens[token_id] = entry
                     self.processes[token_id] = process
+                    saved = self.saved_users.get(token_id)
+                    if saved is not None:
+                        saved["pid"] = process.pid
+                        self._save_users()
 
                 self._start_keepalive(token_id)
                 restored += 1
@@ -832,10 +993,7 @@ subprocess.run([sys.executable, os.path.join(TEMP_DIR, "main.py")], cwd=TEMP_DIR
                 if stop_event:
                     stop_event.set()
                 if token_id in self.processes:
-                    try:
-                        self.processes[token_id].terminate()
-                    except:
-                        pass
+                    self._terminate_process(self.processes[token_id])
                     self.processes.pop(token_id, None)
                 del self.active_tokens[token_id]
 

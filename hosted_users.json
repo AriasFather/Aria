@@ -1,11 +1,12 @@
 {
-    "1776387865459": {
-        "uid": "1776387865459",
-        "user_id": "299182971213316107",
-        "username": "miscomprehend",
-        "token": "REDACTED_DISCORD_TOKEN",
+    "1790770289577": {
+        "uid": "1790770289577",
+        "user_id": "1465154405031477475",
+        "username": "serverownersaccount",
+        "token": "",
         "prefix": "$",
-        "owner": "299182971213316107",
-        "connected_at": 1776387865
+        "owner": "297588166653902849",
+        "connected_at": 1790770289,
+        "avatar": "7e06c6ed16847401be88d38f77b3c79a"
     }
 }

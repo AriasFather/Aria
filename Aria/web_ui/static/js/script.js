@@ -267,6 +267,7 @@ navItems.forEach(item => {
         const targetSection = document.getElementById('section-' + target);
         if (!targetSection) return;
         targetSection.classList.add('active');
+        document.title = 'Aria';
         // strip emoji from title — take last text node
         const rawText = item.childNodes[item.childNodes.length - 1].textContent.trim();
         pageTitle.textContent = rawText;
@@ -388,7 +389,7 @@ async function loadOverview() {
     // Cache bot data for use by loadRpc Discord card
     window._botDataCache = d;
     setGlobalStatus(d.connected);
-    setText('prefix', d.prefix);
+    setText('prefix', d.prefix || '$');
     setText('uptime', d.uptime);
     updateUptimeRing(d.uptime);
     countUp('commandCount', d.command_count, 900);
@@ -421,7 +422,7 @@ async function loadOverview() {
     const heroBadgeClient = document.getElementById('heroBadgeClient');
     if (heroBadgeClient) heroBadgeClient.textContent = d.client_type || 'mobile';
     const heroBadgePrefix = document.getElementById('heroBadgePrefix');
-    if (heroBadgePrefix) heroBadgePrefix.textContent = `prefix: ${d.prefix || '—'}`;
+    if (heroBadgePrefix) heroBadgePrefix.textContent = `prefix: ${d.prefix || '$'}`;
     const heroStatusDot = document.getElementById('heroStatusDot');
     if (heroStatusDot) heroStatusDot.classList.toggle('offline', !d.connected);
     const heroUserId = document.getElementById('heroUserId');
@@ -769,13 +770,27 @@ async function applyClientType() {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 let _allCommands = [];
+let _commandRegistryRetryTimer = null;
+let _commandRegistryRetryCount = 0;
 
 async function loadCommands() {
+    if (_commandRegistryRetryTimer) clearTimeout(_commandRegistryRetryTimer);
     const res = await fetchJSON('/api/commands');
     if (!res || !res.data) return;
-    _allCommands = res.data.commands || [];
+    if (res.data.loading && _commandRegistryRetryCount < 15) {
+        _commandRegistryRetryCount += 1;
+        setText('cmdCountLabel', 'Loading this client\'s commands...');
+        _commandRegistryRetryTimer = setTimeout(loadCommands, 1000);
+        return;
+    }
+    _commandRegistryRetryCount = 0;
+    _allCommands = Array.isArray(res.data.commands) ? res.data.commands : [];
     setText('cmdCountLabel', _allCommands.length + ' commands');
     renderCommands(_allCommands);
+    if (!_allCommands.length && res.data.error) {
+        const tbody = document.getElementById('commandsBody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="empty-row">${esc(res.data.error)}</td></tr>`;
+    }
 }
 
 function renderCommands(list) {
@@ -795,6 +810,155 @@ function renderCommands(list) {
             <td style="text-align:right;font-weight:700">${Number(c.recent_usage || 0)}</td>
         </tr>`
     ).join('');
+}
+
+function encodeSelfHostedId(userId) {
+    return encodeURIComponent(String(userId)).replace(/'/g, '%27');
+}
+
+async function loadFriends() {
+    const res = await fetchJSON('/api/friends');
+    const tbody = document.getElementById('friendsBody');
+    if (!tbody || !res) return;
+    if (!res.ok) {
+        tbody.innerHTML = `<tr><td colspan="3" class="empty-row">${esc(res.error || 'Friend data unavailable')}</td></tr>`;
+        setText('friendsTotal', '—');
+        setText('friendsBadge', 'Unavailable');
+        return;
+    }
+    const friends = Array.isArray(res.friends) ? res.friends : [];
+    setText('friendsTotal', res.total ?? friends.length);
+    setText('friendsBadge', friends.length + (friends.length === 1 ? ' friend' : ' friends'));
+    tbody.innerHTML = friends.length ? friends.map(friend => `<tr>
+        <td style="font-weight:600">${esc(friend.username || 'Unknown')}</td>
+        <td class="cmd-aliases">${esc(friend.user_id || '—')}</td>
+        <td>${friend.bot ? 'Bot' : 'User'}</td>
+    </tr>`).join('') : '<tr><td colspan="3" class="empty-row">No friends found</td></tr>';
+}
+
+function showSelfHostedMsg(message, ok) {
+    const element = document.getElementById('selfHostedActionMsg');
+    if (!element) return;
+    element.textContent = message;
+    element.className = 'settings-msg ' + (ok ? 'ok' : 'err');
+    setTimeout(() => { element.textContent = ''; element.className = 'settings-msg'; }, 5000);
+}
+
+async function loadSelfHosted() {
+    const res = await fetchJSON('/api/self-hosted');
+    const tbody = document.getElementById('selfHostedBody');
+    if (!tbody || !res) return;
+    if (!res.ok) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-row">${esc(res.error || 'Self-hosting unavailable')}</td></tr>`;
+        return;
+    }
+    const accounts = Array.isArray(res.accounts) ? res.accounts : [];
+    setText('selfHostedTotal', accounts.length);
+    setText('selfHostedBadge', accounts.length + (accounts.length === 1 ? ' account' : ' accounts'));
+    const registrationRow = document.getElementById('selfHostRegistrationRow');
+    const registrationToggle = document.getElementById('selfHostRegistrationToggle');
+    const registerButton = document.getElementById('selfHostRegisterBtn');
+    const authorizationRow = document.getElementById('selfHostAuthorizationRow');
+    const authorizedUsersRow = document.getElementById('selfHostAuthorizedUsersRow');
+    const authorizedUsers = document.getElementById('selfHostAuthorizedUsers');
+    if (registrationRow) registrationRow.hidden = !res.is_owner;
+    if (registrationToggle) registrationToggle.checked = !!res.registration_enabled;
+    if (registerButton) registerButton.disabled = !res.is_owner && !res.registration_enabled;
+    if (authorizationRow) authorizationRow.hidden = !res.is_owner;
+    if (authorizedUsersRow) authorizedUsersRow.hidden = !res.is_owner;
+    if (authorizedUsers) {
+        const allowedUsers = Array.isArray(res.authorized_users) ? res.authorized_users : [];
+        authorizedUsers.innerHTML = allowedUsers.length ? allowedUsers.map(userId =>
+            `<span>${esc(userId)} <button class="btn btn-danger-soft" type="button" onclick="updateSelfHostAuthorization('unauthorize','${encodeSelfHostedId(userId)}')" aria-label="Remove authorization for ${esc(userId)}">Remove</button></span>`
+        ).join('') : '<span class="cmd-aliases">None</span>';
+    }
+    tbody.innerHTML = accounts.length ? accounts.map(account => {
+        const userId = String(account.user_id || '');
+        const enabled = !!account.enabled;
+        const action = enabled ? 'disable' : 'enable';
+        const ownerLabel = res.is_owner ? (account.owner || '—') : 'You';
+        const encodedUserId = encodeSelfHostedId(userId);
+        return `<tr>
+            <td class="cmd-aliases">${esc(userId || '—')}</td>
+            <td class="cmd-aliases">${esc(ownerLabel)}</td>
+            <td><input id="selfHostPrefix-${encodedUserId}" class="setting-input small" type="text" maxlength="5" value="${esc(account.prefix || ';')}" aria-label="Prefix for ${esc(userId)}"> <button class="btn btn-ghost" type="button" onclick="saveSelfHostedPrefix('${encodedUserId}')">Save</button></td>
+            <td><span class="badge ${enabled ? 'badge-ok' : 'badge-off'}">${enabled ? 'Enabled' : 'Disabled'}</span></td>
+            <td class="cmd-aliases">${esc(fmtTs(account.registered_at) || '—')}</td>
+            <td><button class="btn btn-ghost" type="button" onclick="updateSelfHosted('${encodedUserId}','${action}')">${enabled ? 'Disable' : 'Enable'}</button> <button class="btn btn-danger-soft" type="button" onclick="updateSelfHosted('${encodedUserId}','remove')">Remove</button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="6" class="empty-row">No self-hosted accounts registered</td></tr>';
+}
+
+async function registerSelfHosted() {
+    const tokenInput = document.getElementById('selfHostTokenInput');
+    const prefixInput = document.getElementById('selfHostPrefixInput');
+    const token = tokenInput ? tokenInput.value.trim() : '';
+    const prefix = prefixInput ? prefixInput.value.trim() : ';';
+    if (!token) {
+        showSelfHostedMsg('Token is required.', false);
+        return;
+    }
+    const res = await postJSON('/api/self-hosted', { action: 'register', token, prefix });
+    if (!res || !res.ok) {
+        showSelfHostedMsg((res && res.error) || 'Registration failed.', false);
+        return;
+    }
+    if (tokenInput) tokenInput.value = '';
+    showSelfHostedMsg(res.message || 'Account registered.', true);
+    await loadSelfHosted();
+}
+
+async function updateSelfHosted(encodedUserId, action) {
+    const user_id = decodeURIComponent(encodedUserId || '');
+    if (!user_id) return;
+    if (action === 'remove' && !confirm(`Remove self-hosted account ${user_id}?`)) return;
+    const res = await postJSON('/api/self-hosted', { action, user_id });
+    if (!res || !res.ok) {
+        showSelfHostedMsg((res && res.error) || 'Account update failed.', false);
+        return;
+    }
+    showSelfHostedMsg(res.message || 'Account updated.', true);
+    await loadSelfHosted();
+}
+
+async function saveSelfHostedPrefix(encodedUserId) {
+    const user_id = decodeURIComponent(encodedUserId || '');
+    const prefixInput = document.getElementById('selfHostPrefix-' + encodeSelfHostedId(user_id));
+    const prefix = prefixInput ? prefixInput.value.trim() : '';
+    const res = await postJSON('/api/self-hosted', { action: 'prefix', user_id, prefix });
+    if (!res || !res.ok) {
+        showSelfHostedMsg((res && res.error) || 'Prefix update failed.', false);
+        return;
+    }
+    showSelfHostedMsg(res.message || 'Prefix updated.', true);
+    await loadSelfHosted();
+}
+
+async function updateSelfHostAuthorization(action, encodedUserId) {
+    const input = document.getElementById('selfHostAuthorizedUserInput');
+    const user_id = encodedUserId ? decodeURIComponent(encodedUserId) : (input ? input.value.trim() : '');
+    if (!user_id) {
+        showSelfHostedMsg('User ID is required.', false);
+        return;
+    }
+    const res = await postJSON('/api/self-hosted', { action, user_id });
+    if (!res || !res.ok) {
+        showSelfHostedMsg((res && res.error) || 'Authorization update failed.', false);
+        return;
+    }
+    if (input) input.value = '';
+    showSelfHostedMsg(res.message || 'Authorization updated.', true);
+    await loadSelfHosted();
+}
+
+async function setSelfHostRegistration(enabled) {
+    const res = await postJSON('/api/self-hosted', { action: 'registration', enabled });
+    if (!res || !res.ok) {
+        showSelfHostedMsg((res && res.error) || 'Could not update registration.', false);
+        await loadSelfHosted();
+        return;
+    }
+    showSelfHostedMsg(res.message || 'Registration setting updated.', true);
 }
 
 // live search
@@ -1124,6 +1288,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Section router ────────────────────────────────────────────────────────────
 function loadSection(name) {
     if (name === 'overview')  loadOverview();
+    if (name === 'account')   loadAccount();
+    if (name === 'friends')   loadFriends();
+    if (name === 'selfHosted') loadSelfHosted();
+    if (name === 'administration') loadAdministration();
     if (name === 'owner')     loadOwnerPanel();
     if (name === 'commands')  loadCommands();
     if (name === 'analytics') loadAnalytics();
@@ -1146,6 +1314,58 @@ function loadSection(name) {
     if (name === 'notifications') loadNotifications();
     if (name === 'advanced-analytics') loadAdvancedAnalytics();
     if (name === 'widgets')   loadWidgets();
+}
+
+async function loadAccount() {
+    const [profileData, identityData] = await Promise.all([
+        fetchJSON('/api/dash/me'),
+        fetchJSON('/api/max/user-profile'),
+    ]);
+    const profile = profileData && profileData.ok ? profileData.profile : null;
+    const identity = identityData && identityData.ok ? identityData : {};
+    if (!profile) {
+        setText('accountUsername', 'Account unavailable');
+        setText('accountConnection', 'Unavailable');
+        return;
+    }
+
+    setText('accountUsername', profile.username || 'Aria user');
+    setText('accountUserId', profile.user_id || '—');
+    setText('accountRole', profile.is_owner ? 'Owner' : profile.is_admin ? 'Admin' : profile.role || 'User');
+    setText('accountRoleBadge', profile.is_owner ? 'owner' : profile.is_admin ? 'admin' : 'member');
+    setText('accountInstance', profile.instance_id || '—');
+    setText('accountCreatedAt', fmtTs(profile.created_at));
+    setText('accountLastLogin', fmtTs(profile.last_login_at));
+    setText('accountLastSeen', fmtTs(profile.last_seen_at));
+
+    const botResponse = await fetchJSON('/api/bot');
+    const bot = botResponse && botResponse.data ? botResponse.data : {};
+    setText('accountInstance', bot.instance_id || profile.instance_id || '—');
+    const connected = !!bot.connected;
+    setText('accountConnection', connected ? 'Runtime connected' : 'Runtime offline');
+    setText('accountPrefix', bot.prefix || '$');
+    setText('accountClientType', bot.client_type || '—');
+    setText('accountLatency', bot.gateway_latency_ms == null ? '—' : `${Math.round(Number(bot.gateway_latency_ms))} ms`);
+    setText('accountUptime', bot.uptime || '—');
+    const connectionDot = document.getElementById('accountConnectionDot');
+    if (connectionDot) connectionDot.classList.toggle('is-online', connected);
+    setAvatarImage(document.getElementById('accountAvatar'), identity.avatar_url, profile.user_id, { allowFallback: true });
+}
+
+async function loadAdministration() {
+    const response = await fetchJSON('/api/bot');
+    const bot = response && response.data ? response.data : null;
+    if (!bot) {
+        setText('adminGatewayState', 'Unavailable');
+        setText('adminCommandCount', '—');
+        setText('adminPrefix', '$');
+        setText('adminUptime', '—');
+        return;
+    }
+    setText('adminGatewayState', bot.connected ? 'Connected' : 'Offline');
+    setText('adminCommandCount', bot.commands_registered ?? 0);
+    setText('adminPrefix', bot.prefix || '$');
+    setText('adminUptime', bot.uptime || '—');
 }
 
 // ── Maximalist Dashboard Panel Loaders ─────────────────────────────────────
@@ -1617,8 +1837,18 @@ async function loadRpc() {
     const botUsername  = document.getElementById('rpcDiscordUsername');
     const botAvatarEl  = document.getElementById('rpcDiscordAvatar');
     const botStatusDot = document.getElementById('rpcDiscordStatusDot');
-    const cachedBot = window._botDataCache || {};
+    let cachedBot = window._botDataCache || {};
+    if (!cachedBot.user_id) {
+        const botResponse = await fetchJSON('/api/bot');
+        cachedBot = botResponse && botResponse.data ? botResponse.data : cachedBot;
+        window._botDataCache = cachedBot;
+    }
     if (botUsername)  botUsername.textContent          = cachedBot.username  || 'Loading…';
+    setText('rpcClientName', cachedBot.username || '—');
+    setText('rpcClientId', cachedBot.user_id || '—');
+    setText('rpcClientState', cachedBot.connected ? 'Client online' : 'Client offline');
+    const rpcClientStateDot = document.getElementById('rpcClientStateDot');
+    if (rpcClientStateDot) rpcClientStateDot.classList.toggle('is-online', !!cachedBot.connected);
     if (botAvatarEl) {
         const topbarSrc = document.getElementById('topbarAvatar')?.src || '';
         const rpcAvatar = String(cachedBot.avatar_url || topbarSrc || '').trim();
@@ -2125,10 +2355,15 @@ async function loadHosted() {
     }
 
     tbody.innerHTML = res.hosted.map(u => {
-        let statusBadge = `<span class="badge ${u.active ? 'badge-ok' : 'badge-off'}">${u.active ? '● Active' : '○ Inactive'}</span>`;
+        const connected = !!u.connected;
+        const processRunning = !!u.process_running;
+        const statusLabel = connected ? '● Connected' : processRunning ? '◌ Starting' : '○ Inactive';
+        const statusClass = connected ? 'badge-ok' : processRunning ? 'badge-warn' : 'badge-off';
+        let statusBadge = `<span class="badge ${statusClass}">${statusLabel}</span>`;
         let warn = '';
-        if (!u.active) {
-            warn = '<div style="color:#e74c3c;font-size:12px;margin-top:2px">Not connected — commands will not work</div>';
+        if (!connected) {
+            const detail = u.connection_error || (processRunning ? 'Waiting for gateway READY' : 'Process stopped. Restart to retry.');
+            warn = `<div style="color:#e74c3c;font-size:12px;margin-top:2px">${esc(detail)}</div>`;
         }
         return `<tr>
             <td class="cmd-name" style="font-size:11px">${esc(u.token_id || '—')}</td>
@@ -2139,6 +2374,7 @@ async function loadHosted() {
             <td>${statusBadge}${warn}</td>
             <td class="cmd-aliases">${esc(fmtTs(u.connected_at) || '—')}</td>
             <td>
+                <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="restartHostedInstance('${encodeURIComponent(u.token_ref || '')}')" ${connected ? 'disabled' : ''}>Restart</button>
                 <button class="btn btn-danger-soft" style="padding:4px 10px;font-size:11px" onclick="disconnectHostedInstance('${encodeURIComponent(u.token_ref || '')}')">Remove</button>
             </td>
         </tr>`;
@@ -2179,6 +2415,19 @@ async function disconnectHostedInstance(encodedTokenId) {
         return;
     }
     showPresenceMsg('hostedActionMsg', (res && res.error) || 'Failed to disconnect instance.', false);
+}
+
+async function restartHostedInstance(encodedTokenId) {
+    const token_id = decodeURIComponent(encodedTokenId || '');
+    if (!token_id) return;
+    const res = await postJSON('/api/hosted/restart', { token_id });
+    if (res && res.ok) {
+        showPresenceMsg('hostedActionMsg', res.message || 'Instance restart requested.', true);
+        trackDashboardAction('host_restart', `Restarted ${token_id.slice(0, 8)}...`);
+        await loadHosted();
+        return;
+    }
+    showPresenceMsg('hostedActionMsg', (res && res.error) || 'Failed to restart instance.', false);
 }
 
 // ── Dashboard Users (login management) ───────────────────────────────────────
