@@ -225,29 +225,53 @@ class BoostManager:
         return self.available_boosts > 0
     
     def boost_server(self, server_id):
-        if not self.can_boost(server_id):
-            return False, "No boosts available"
-        
         try:
-            data = {"user_premium_guild_subscription_slot_ids": ["1"]}
-            
-            response = self.api.request(
-                "PUT",
-                f"/guilds/{server_id}/premium/subscriptions",
-                data=data
-            )
-            
-            if response and response.status_code == 200:
-                self.boosted_servers[server_id] = time.time()
-                self.available_boosts -= 1
-                self.save_state()
-                return True, f"Boosted server {server_id}"
-            elif response and response.status_code == 403:
-                return False, "No permission to boost"
-            elif response and response.status_code == 404:
-                return False, "Server not found"
-            else:
-                return False, f"Failed: {response.status_code if response else 'No response'}"
+            slots = self._get_cached_slots(force=True)
+            if slots is None:
+                return False, "Unable to fetch boost slots"
+
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            target_id = str(server_id)
+            for slot in slots:
+                if not isinstance(slot, dict):
+                    continue
+                slot_id = str(slot.get("id") or "").strip()
+                if not slot_id:
+                    continue
+
+                subscription = slot.get("premium_guild_subscription")
+                if isinstance(subscription, dict) and str(subscription.get("guild_id") or "") == target_id:
+                    return True, f"Server {target_id} is already boosted"
+
+                cooldown_ends_at = slot.get("cooldown_ends_at")
+                if cooldown_ends_at:
+                    try:
+                        cooldown = datetime.fromisoformat(str(cooldown_ends_at).replace("Z", "+00:00"))
+                        if cooldown > now:
+                            continue
+                    except (TypeError, ValueError):
+                        continue
+
+                response = self.api.request(
+                    "PUT",
+                    f"/users/@me/guilds/premium/subscriptions/{slot_id}",
+                    data={"guild_id": target_id},
+                )
+                if response and response.status_code in (200, 204):
+                    self.boosted_servers[target_id] = time.time()
+                    self.available_boosts = max(0, int(self.available_boosts) - 1)
+                    self._slots_cache = {"timestamp": 0.0, "data": None}
+                    self.save_state()
+                    return True, f"Boosted server {target_id}"
+                status = response.status_code if response else "No response"
+                if status == 403:
+                    return False, "No permission to boost"
+                if status == 404:
+                    return False, "Server not found"
+                return False, f"Failed: {status}"
+
+            return False, "No available boost slots"
         except Exception as e:
             return False, f"Error: {str(e)[:50]}"
     

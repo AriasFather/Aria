@@ -10,6 +10,7 @@ import random
 import time
 import string
 from datetime import datetime, timezone
+from formatter import VERSION
 
 
 def setup_bulk_commands(bot, delete_after_delay):
@@ -436,7 +437,7 @@ def setup_bulk_commands(bot, delete_after_delay):
 
     @bot.command(name="version")
     def version_cmd(ctx, args):
-        _send(ctx, _box("Version", "Aria v1.0.0\nBuilt with Python"))
+        _send(ctx, _box("Version", f"Aria {VERSION}\nBuilt with Python"))
 
     @bot.command(name="info", aliases=["sysinfo"])
     def info_cmd(ctx, args):

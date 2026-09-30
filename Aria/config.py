@@ -48,10 +48,7 @@ class Config:
             "mongo_uri": "mongodb://127.0.0.1:27017",
             "mongo_database": "aria",
             "mongo_collection": "app_state",
-            "mongo_timeout_ms": 1500,
-            "captcha_enabled": True,
-            "captcha_api_key": "CAP-E28C16368B6FAE5FBE59E177FDE46DEF482EFDADB9564B2C1BEFB204F18C0F69",
-            "captcha_service": "capsolver"  # 2captcha, anticaptcha, capmonster, capsolver, spoof
+            "mongo_timeout_ms": 1500
         }
         self.config = self.load_config()
     
@@ -72,10 +69,6 @@ class Config:
                         if os.path.exists(hosted_token_path):
                             with open(hosted_token_path, "r") as tf:
                                 config["token"] = tf.read().strip()
-
-                    # Warn if captcha_api_key is missing or default
-                    if not config.get("captcha_api_key") or config["captcha_api_key"].startswith("CAP-") and len(config["captcha_api_key"]) < 40:
-                        print("[WARN] captcha_api_key is missing or default in config. Captcha solving may not work.")
 
                     return config
             except Exception as e:

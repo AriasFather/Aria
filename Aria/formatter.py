@@ -13,7 +13,7 @@ YELLOW = "\u001b[0;33m"
 PINK = "\u001b[1;35m"
 
 NAME = "Aria"
-VERSION = "v1.1.0"
+VERSION = "v2.0.0"
 AUTHOR = "Misconsideration"
 
 def quote_block(text: str) -> str:

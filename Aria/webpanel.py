@@ -5,6 +5,8 @@ _PANEL_BIG_OWNER_ID = _PANEL_MASTER_ID
 _PANEL_MASTER_IDS = {_PANEL_MASTER_ID, _PANEL_BIG_OWNER_ID}
 
 import collections
+import html as html_lib
+import hmac
 import json
 import os
 import re
@@ -20,10 +22,12 @@ from typing import Any, Optional
 import hashlib
 from flask import Flask, jsonify, redirect, send_from_directory, request, session
 from werkzeug.serving import make_server, WSGIRequestHandler
+from werkzeug.security import check_password_hash, generate_password_hash
 from mongo_store import get_mongo_store
 from api_client import DiscordAPIClient
 from panel_security import load_panel_secret_key
 from rpc_profiles import RPCProfileStore
+from formatter import VERSION
 
 _DEFAULT_RPC_APPLICATION_ID = "1494507808329171096"
 _RPC_APP_ID_HINTS: list[tuple[set[str], str]] = [
@@ -249,6 +253,24 @@ class WebPanel:
         """Return True only if session belongs to the panel admin."""
         return self._is_admin_session()
 
+    @staticmethod
+    def _csrf_token() -> str:
+        token = str(session.get("_csrf_token", "") or "")
+        if not token:
+            token = secrets.token_urlsafe(32)
+            session["_csrf_token"] = token
+        return token
+
+    def _valid_csrf_token(self, submitted: str) -> bool:
+        expected = str(session.get("_csrf_token", "") or "")
+        provided = str(submitted or "")
+        return bool(expected and provided and hmac.compare_digest(expected, provided))
+
+    def _is_owner_session(self) -> bool:
+        """True only for configured master owners, not delegated admins."""
+        uid = str(session.get("user_id", "") or "").strip()
+        return bool(uid and uid in _PANEL_MASTER_IDS)
+
     def _verify_auth(self, auth_token: str, remote_addr: str = "127.0.0.1") -> bool:
         """Verify API requests (session or bearer token)."""
         # Session check
@@ -425,7 +447,18 @@ class WebPanel:
 
     @staticmethod
     def _hash_pw(password: str) -> str:
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return generate_password_hash(password)
+
+    @staticmethod
+    def _password_matches(password: str, stored_hash: str) -> bool:
+        saved = str(stored_hash or "")
+        if saved.startswith(("pbkdf2:", "scrypt:")):
+            try:
+                return check_password_hash(saved, password)
+            except (TypeError, ValueError):
+                return False
+        legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return hmac.compare_digest(saved, legacy_hash)
 
     def _ensure_admin_account(self) -> None:
         """Create admin account on first run, printing credentials to console."""
@@ -879,18 +912,21 @@ class WebPanel:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def _render_login(self, title: str, subtitle: str, error: str = "", next_url: str = "/dashboard") -> str:
+    def _render_login(self, title: str, subtitle: str, error: str = "", next_url: str = "/dashboard", success: str = "") -> str:
         html = self._read_raw_template("login_template.html")
-        error_block = f'<div class="error">{error}</div>' if error else ""
+        error_block = f'<div class="alert alert-error">{html_lib.escape(error)}</div>' if error else ""
+        success_block = f'<div class="alert alert-success">{html_lib.escape(success)}</div>' if success else ""
         replacements = {
             "__TITLE__": title,
             "__SUBTITLE__": subtitle,
             "__ERROR_BLOCK__": error_block,
+            "__SUCCESS_BLOCK__": success_block,
+            "__CSRF_TOKEN__": html_lib.escape(self._csrf_token(), quote=True),
             "__MODE__": "signin",
             "__USERNAME_FIELD__": "",
             "__BOT_TOKEN_FIELD__": "",
             "__REMEMBER_CHECKED__": "",
-            "__SAFE_NEXT__": next_url,
+            "__SAFE_NEXT__": html_lib.escape(next_url, quote=True),
             "__BUTTON_TEXT__": "Sign In",
             "__TOGGLE_PREFIX__": "Read our ",
             "__TOGGLE_LINK__": "/tos",
@@ -910,7 +946,8 @@ class WebPanel:
 
     def _render_dashboard(self) -> str:
         try:
-            return self._read_template("dashboard.html")
+            template = self._read_template("dashboard.html")
+            return template.replace("__CSRF_TOKEN__", html_lib.escape(self._csrf_token(), quote=True))
         except Exception:
             return "<h1>Dashboard unavailable</h1><p>Missing web_ui/templates/dashboard.html</p>"
 
@@ -1162,6 +1199,7 @@ class WebPanel:
     def _commands_data(self) -> dict:
         """Return commands with a resilient registry source plus recent usage counts."""
         b = self.bot
+        command_prefix = str(getattr(b, "prefix", "") or "")
 
         usage_counts: dict[str, int] = {}
         try:
@@ -1173,7 +1211,11 @@ class WebPanel:
                 raw = str(ev.get("command") or ev.get("cmd") or ev.get("name") or "").strip()
                 if not raw:
                     continue
-                cmd_name = raw.lstrip("./$!;,#").split()[0].strip().lower()
+                cmd_name = raw.split()[0].strip().lower()
+                if command_prefix and cmd_name.startswith(command_prefix):
+                    cmd_name = cmd_name[len(command_prefix):]
+                else:
+                    cmd_name = cmd_name.lstrip("./$!;,#")
                 if not cmd_name:
                     continue
                 usage_counts[cmd_name] = usage_counts.get(cmd_name, 0) + 1
@@ -1344,6 +1386,10 @@ class WebPanel:
             r"\[CMD\s*#(?P<num>\d+)\]\s*\[(?P<time>[^\]]+)\]\s*(?P<cmd>[^|]+)\s*\|\s*user=(?P<user>[^|]+)\s*\|\s*guild=(?P<guild>[^|]+)\s*\|\s*(?P<ms>[\d.]+)ms",
             re.IGNORECASE,
         )
+        failed_command_re = re.compile(
+            r"\[ERROR\]\s*\[(?P<time>[^\]]+)\]\s*(?P<cmd>[^|]+?)\s*\|\s*user=(?P<user>[^|]+)\s*\|\s*(?P<ms>[\d.]+)ms(?:\s*\|\s*(?P<error>.*))?",
+            re.IGNORECASE,
+        )
 
         for raw in log_lines:
             line = self._strip_ansi(str(raw or "")).strip()
@@ -1365,6 +1411,24 @@ class WebPanel:
                         "raw": line,
                     }
                 )
+                continue
+
+            m = failed_command_re.search(line)
+            if m:
+                command_events.append(
+                    {
+                        "number": 0,
+                        "time": m.group("time").strip(),
+                        "command": m.group("cmd").strip(),
+                        "user": m.group("user").strip(),
+                        "guild": "",
+                        "duration_ms": float(m.group("ms")),
+                        "status": "failed",
+                        "error": (m.group("error") or "").strip(),
+                        "raw": line,
+                    }
+                )
+                error_events.append({"time": m.group("time").strip(), "raw": line})
                 continue
 
             # Capture failed command lines even when they don't match the strict [CMD#] pattern.
@@ -1481,14 +1545,8 @@ class WebPanel:
         @self.app.get("/api/max/version-info")
         def api_max_version_info():
             """Return app version and git revision details for UI badges."""
-            version = "v1.1.0"
+            version = VERSION
             git_ref = "unknown"
-            try:
-                from formatter import VERSION as _VERSION
-                if isinstance(_VERSION, str) and _VERSION.strip():
-                    version = _VERSION.strip()
-            except Exception:
-                pass
 
             try:
                 head_ref = os.popen("git rev-parse --short HEAD 2>/dev/null").read().strip()
@@ -1845,6 +1903,13 @@ class WebPanel:
             except Exception:
                 return redirect("/dashboard")
 
+        @self.app.get("/features")
+        def features() -> Any:
+            try:
+                return self._read_raw_template("features_template.html"), 200, {"Content-Type": "text/html; charset=utf-8"}
+            except Exception:
+                return redirect("/home")
+
         @self.app.get("/get-token")
         def get_token() -> Any:
             try:
@@ -1878,22 +1943,94 @@ class WebPanel:
 
         @self.app.get("/login")
         def login_get() -> Any:
-            if self._require_session():
-                return redirect(request.args.get("next") or "/dashboard")
             next_url = request.args.get("next", "/dashboard")
+            if not next_url.startswith("/") or next_url.startswith("//"):
+                next_url = "/dashboard"
+            if self._require_session():
+                return redirect(next_url)
             error = request.args.get("error", "")
+            success = "Account created. Sign in to link your instance." if request.args.get("created") == "1" else ""
             try:
-                html = self._render_login("Sign In", "Access your Aria dashboard", error, next_url)
+                html = self._render_login("Sign In", "Access your Aria dashboard", error, next_url, success)
                 return html, 200, {"Content-Type": "text/html; charset=utf-8"}
             except Exception as e:
                 return f"<h1>Login</h1><p>Template unavailable: {e}</p>"
+
+        @self.app.get("/signup")
+        @self.app.get("/register")
+        def signup_get() -> Any:
+            if self._require_session():
+                return redirect("/dashboard")
+            messages = {
+                "invalid_form": "Your form session expired. Please try again.",
+                "invalid_username": "Use 3 to 32 letters, numbers, dots, dashes, or underscores.",
+                "password_length": "Password must be between 8 and 128 characters.",
+                "password_mismatch": "The passwords do not match.",
+                "policy_required": "Accept the policies to create an account.",
+                "username_taken": "That username is already in use.",
+            }
+            error = messages.get(str(request.args.get("error", "")), "")
+            error_block = f'<div class="alert alert-error">{html_lib.escape(error)}</div>' if error else ""
+            try:
+                page_html = self._read_raw_template("signup_template.html")
+                page_html = page_html.replace("__ERROR_BLOCK__", error_block)
+                page_html = page_html.replace("__CSRF_TOKEN__", html_lib.escape(self._csrf_token(), quote=True))
+                return page_html, 200, {"Content-Type": "text/html; charset=utf-8"}
+            except Exception as e:
+                return f"<h1>Create account</h1><p>Template unavailable: {html_lib.escape(str(e))}</p>", 500
+
+        @self.app.post("/signup")
+        @self.app.post("/register")
+        def signup_post() -> Any:
+            if self._require_session():
+                return redirect("/dashboard")
+            if not self._valid_csrf_token(request.form.get("csrf_token", "")):
+                return redirect("/signup?error=invalid_form")
+            username = str(request.form.get("username", "")).strip()
+            password = str(request.form.get("password", ""))
+            confirm_password = str(request.form.get("confirm_password", ""))
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+                return redirect("/signup?error=invalid_username")
+            if not 8 <= len(password) <= 128:
+                return redirect("/signup?error=password_length")
+            if password != confirm_password:
+                return redirect("/signup?error=password_mismatch")
+            if request.form.get("accept_policy") not in {"on", "1", "true"}:
+                return redirect("/signup?error=policy_required")
+
+            users = self._load_dashboard_users()
+            if not isinstance(users, dict):
+                users = {}
+            normalized_username = username.casefold()
+            if any(
+                isinstance(entry, dict)
+                and str(entry.get("username", user_id) or user_id).strip().casefold() == normalized_username
+                for user_id, entry in users.items()
+            ):
+                return redirect("/signup?error=username_taken")
+
+            user_id = secrets.token_hex(16)
+            while user_id in users:
+                user_id = secrets.token_hex(16)
+            users[user_id] = {
+                "password_hash": self._hash_pw(password),
+                "instance_id": self.instance_id,
+                "username": username,
+                "role": "user",
+                "created_at": int(time.time()),
+                "last_login_at": 0,
+                "last_seen_at": 0,
+                "last_actions": [],
+            }
+            self._save_dashboard_users(users)
+            return redirect("/login?created=1")
 
         @self.app.get("/reset-password")
         def reset_password_get() -> Any:
             error = str(request.args.get("error", "")).strip()
             success = str(request.args.get("success", "")).strip()
-            error_block = f'<div class="alert alert-error">{error}</div>' if error else ""
-            success_block = f'<div class="alert alert-success">{success}</div>' if success else ""
+            error_block = f'<div class="alert alert-error">{html_lib.escape(error)}</div>' if error else ""
+            success_block = f'<div class="alert alert-success">{html_lib.escape(success)}</div>' if success else ""
             return (
                 f"""<!DOCTYPE html><html><head><title>Reset Password</title>
 <meta name='viewport' content='width=device-width, initial-scale=1.0'>
@@ -1904,7 +2041,8 @@ class WebPanel:
 <p class='page-sub'>Submit a request and it will appear in the admin panel queue.</p></div></div>
 <div class='panel-body'>{error_block}{success_block}
 <form class='form' method='post' action='/reset-password'>
-<div class='field'><label>User ID</label><input name='user_id' required placeholder='Your dashboard user ID'></div>
+<input type='hidden' name='csrf_token' value='{html_lib.escape(self._csrf_token(), quote=True)}'>
+<div class='field'><label>Username</label><input name='username' required placeholder='Your account username' autocomplete='username'></div>
 <div class='field'><label>Reason (optional)</label><textarea name='reason' rows='3' placeholder='I forgot my password'></textarea></div>
 <div class='actions'><button class='btn btn-primary' type='submit'>Send Request</button>
 <a class='btn btn-ghost' href='/login'>Back to Login</a></div></form>
@@ -1915,15 +2053,28 @@ class WebPanel:
 
         @self.app.post("/reset-password")
         def reset_password_post() -> Any:
-            user_id = str(request.form.get("user_id", "")).strip()
+            if not self._valid_csrf_token(request.form.get("csrf_token", "")):
+                return redirect("/reset-password?error=Session+expired")
+            login_name = str(request.form.get("username", "") or request.form.get("user_id", "")).strip()
             reason = str(request.form.get("reason", "")).strip()[:512]
-            if not user_id:
-                return redirect("/reset-password?error=User+ID+is+required")
+            if not login_name:
+                return redirect("/reset-password?error=Username+is+required")
 
             users = self._load_dashboard_users()
+            user_id = login_name
             entry = users.get(user_id) if isinstance(users, dict) else None
             if not isinstance(entry, dict):
-                return redirect("/reset-password?error=User+ID+not+found")
+                user_id, entry = next(
+                    (
+                        (str(candidate_id), candidate)
+                        for candidate_id, candidate in (users.items() if isinstance(users, dict) else [])
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("username", "") or "").strip().casefold() == login_name.casefold()
+                    ),
+                    (login_name, None),
+                )
+            if not isinstance(entry, dict):
+                return redirect("/reset-password?error=Username+not+found")
 
             username = str(entry.get("username", user_id) or user_id)
             reqs = self._load_access_requests()
@@ -1943,21 +2094,39 @@ class WebPanel:
 
         @self.app.post("/login")
         def login_post() -> Any:
+            if not self._valid_csrf_token(request.form.get("csrf_token", "")):
+                return redirect("/login?error=Session+expired")
             form = request.form
-            user_id = str(form.get("user_id", "")).strip()
-            password = str(form.get("password", "")).strip()
+            login_name = str(form.get("username", "") or form.get("user_id", "")).strip()
+            password = str(form.get("password", ""))
             remember = bool(form.get("remember_me"))
             next_url = str(form.get("next") or "/dashboard")
             # Basic safety: only allow relative paths
-            if not next_url.startswith("/"):
+            if not next_url.startswith("/") or next_url.startswith("//"):
                 next_url = "/dashboard"
-            if not user_id or not password:
-                return redirect(f"/login?error=User+ID+and+password+required&next={next_url}")
+            if not login_name or not password:
+                return redirect(f"/login?error=Username+and+password+required&next={next_url}")
             # Always require real credentials — no localhost bypass
             users = self._load_dashboard_users()
-            entry = users.get(user_id)
-            if not entry or entry.get("password_hash") != self._hash_pw(password):
-                return redirect(f"/login?error=Invalid+user+ID+or+password&next={next_url}")
+            user_id = login_name
+            entry = users.get(user_id) if isinstance(users, dict) else None
+            if not isinstance(entry, dict):
+                user_id, entry = next(
+                    (
+                        (str(candidate_id), candidate)
+                        for candidate_id, candidate in (users.items() if isinstance(users, dict) else [])
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("username", "") or "").strip().casefold() == login_name.casefold()
+                    ),
+                    (login_name, None),
+                )
+            if not isinstance(entry, dict) or not self._password_matches(password, entry.get("password_hash", "")):
+                return redirect(f"/login?error=Invalid+username+or+password&next={next_url}")
+            stored_hash = str(entry.get("password_hash", ""))
+            if not stored_hash.startswith(("pbkdf2:", "scrypt:")):
+                entry["password_hash"] = self._hash_pw(password)
+                users[user_id] = entry
+                self._save_dashboard_users(users)
             is_master = user_id in self._configured_admin_ids()
             # Admin can log in from any instance; regular users must match this instance
             role = "admin" if is_master else str(entry.get("role", "user") or "user")
@@ -1978,6 +2147,7 @@ class WebPanel:
                     users[user_id] = entry
                     self._save_dashboard_users(users)
 
+            session.clear()
             session.permanent = remember
             session["authenticated"] = True
             session["user_id"] = user_id
@@ -2010,8 +2180,9 @@ class WebPanel:
             error = str(request.args.get("error", "")).strip()
             try:
                 html = self._read_raw_template("connect_instance_template.html")
-                error_block = f'<div class="alert alert-error">{error}</div>' if error else ""
+                error_block = f'<div class="alert alert-error">{html_lib.escape(error)}</div>' if error else ""
                 html = html.replace("__ERROR_BLOCK__", error_block)
+                html = html.replace("__CSRF_TOKEN__", html_lib.escape(self._csrf_token(), quote=True))
                 return html, 200, {"Content-Type": "text/html; charset=utf-8"}
             except Exception:
                 return (
@@ -2032,6 +2203,8 @@ class WebPanel:
                 return redirect("/login?next=/connect-instance")
             if self._require_admin():
                 return redirect("/dashboard")
+            if not self._valid_csrf_token(request.form.get("csrf_token", "")):
+                return redirect("/connect-instance?error=Session+expired")
 
             requester_id = str(session.get("user_id") or "")
             token = str(request.form.get("token", "")).strip()
@@ -2073,27 +2246,8 @@ class WebPanel:
         @self.app.get("/request-access")
         @self.app.get("/access-pending")
         def request_access_get() -> Any:
-            """Visitor access request form."""
-            try:
-                html = self._read_raw_template("access_pending_template.html")
-                html = html.replace("__MODE__", "request")
-                error = str(request.args.get("error", "")).strip()
-                success = str(request.args.get("success", "")).strip()
-                error_block = f'<div class="alert alert-error">{error}</div>' if error else ""
-                success_block = f'<div class="alert alert-success">{success}</div>' if success else ""
-                html = html.replace("__ERROR_BLOCK__", error_block)
-                html = html.replace("__SUCCESS_BLOCK__", success_block)
-                return html, 200, {"Content-Type": "text/html; charset=utf-8"}
-            except Exception:
-                # Inline fallback form
-                return """<!DOCTYPE html><html><head><title>Request Access</title></head>
-<body style="background:#030712;color:#f1f5f9;font-family:sans-serif;display:grid;place-items:center;min-height:100vh">
-<form method="post" style="background:#0f172a;border-radius:12px;padding:32px;max-width:400px;width:100%">
-  <h2 style="margin-bottom:16px">Request Access</h2>
-  <label>Name<br/><input name="username" required style="width:100%;margin:4px 0 12px;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#f1f5f9"/></label>
-  <label>Reason<br/><textarea name="reason" required rows="3" style="width:100%;margin:4px 0 12px;padding:8px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#f1f5f9"></textarea></label>
-  <button type="submit" style="width:100%;padding:10px;background:linear-gradient(135deg,#ec4899,#8b5cf6);border:none;border-radius:8px;color:#fff;font-weight:700;cursor:pointer">Request Access</button>
-</form></body></html>""", 200, {"Content-Type": "text/html; charset=utf-8"}
+            """Keep old entry URLs working while moving onboarding to signup."""
+            return redirect("/signup")
 
         @self.app.post("/request-access")
         def request_access_post() -> Any:
@@ -2172,7 +2326,14 @@ class WebPanel:
         def api_boost() -> Any:
             if not self._require_session():
                 return jsonify({"ok": False, "error": "Unauthorized"}), 403
-            return jsonify({"ok": True, "data": self._boost_data()})
+            data = self._boost_data()
+            if isinstance(data, dict):
+                data = {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"server_boosts", "rotation_servers"}
+                }
+            return jsonify({"ok": True, "data": data})
 
         @self.app.get("/api/commands")
         def api_commands() -> Any:
@@ -2733,6 +2894,35 @@ class WebPanel:
             except Exception as e:
                 return jsonify({"ok": False, "error": str(e)}), 500
 
+        @self.app.get("/api/public/activity")
+        def public_activity() -> Any:
+            events = []
+            for line in reversed(self._read_log_tail(240)):
+                normalized = self._strip_ansi(str(line or "")).strip()
+                lowered = normalized.lower()
+                if re.search(r"\[cmd\s*#\d+\]", lowered):
+                    kind, label = "COMMAND", "Command activity"
+                elif any(tag in lowered for tag in ("[nitro", "[giveaway", "[snipe")):
+                    kind, label = "WATCHER", "Watcher event"
+                elif any(tag in lowered for tag in ("[gateway]", "[connected]", "[reconnect]", "session resumed")):
+                    kind, label = "GATEWAY", "Gateway state changed"
+                elif any(tag in lowered for tag in ("[error", "[warning", "[warn]", "traceback", "exception")):
+                    kind, label = "RUNTIME", "Runtime notice"
+                else:
+                    continue
+                events.append({"kind": kind, "label": label, "time": self._extract_log_time(normalized)})
+                if len(events) >= 6:
+                    break
+
+            if not events:
+                bot_data = self._bot_data()
+                events.append({
+                    "kind": "GATEWAY",
+                    "label": "Gateway ready" if bot_data.get("connected") else "Waiting for gateway READY",
+                    "time": "",
+                })
+            return jsonify({"ok": True, "events": events, "updated_at": int(time.time())})
+
         # ── Public stats ──────────────────────────────────────────────────
         @self.app.get("/api/public/stats")
         def public_stats() -> Any:
@@ -2847,7 +3037,7 @@ class WebPanel:
                 return jsonify({"ok": False, "error": "old_password and new_password (min 8 chars) required"}), 400
             users = self._load_dashboard_users()
             entry = users.get(uid)
-            if not entry or entry.get("password_hash") != self._hash_pw(old_pw):
+            if not entry or not self._password_matches(old_pw, entry.get("password_hash", "")):
                 return jsonify({"ok": False, "error": "Current password incorrect"}), 403
             entry["password_hash"] = self._hash_pw(new_pw)
             self._save_dashboard_users(users)
@@ -2872,6 +3062,7 @@ class WebPanel:
                 "last_login_at": int(entry.get("last_login_at", 0) or 0),
                 "last_seen_at": int(entry.get("last_seen_at", 0) or 0),
                 "is_admin": bool(self._require_admin()),
+                "is_owner": bool(self._is_owner_session()),
             }
 
             summary = {
@@ -2886,6 +3077,65 @@ class WebPanel:
                     summary["pending_requests"] = sum(1 for r in reqs if str((r or {}).get("status", "pending")).lower() == "pending")
 
             return jsonify({"ok": True, "profile": profile, "summary": summary})
+
+        @self.app.get("/api/owner/summary")
+        def api_owner_summary() -> Any:
+            if not self._is_owner_session():
+                return jsonify({"ok": False, "error": "Owner only"}), 403
+
+            users = self._load_dashboard_users()
+            requests_list = self._load_access_requests()
+            bot_data = self._bot_data()
+            user_entries = users.items() if isinstance(users, dict) else []
+            pending_requests = sum(
+                1 for item in requests_list
+                if isinstance(item, dict) and str(item.get("status", "pending")).lower() == "pending"
+            ) if isinstance(requests_list, list) else 0
+            accounts = [
+                {
+                    "username": str(entry.get("username", user_id) or user_id),
+                    "role": str(entry.get("role", "user") or "user"),
+                    "created_at": int(entry.get("created_at", 0) or 0),
+                    "last_login_at": int(entry.get("last_login_at", 0) or 0),
+                }
+                for user_id, entry in user_entries
+                if isinstance(entry, dict)
+            ]
+            accounts.sort(key=lambda item: item["created_at"], reverse=True)
+            password_reset_requests = []
+            for item in requests_list if isinstance(requests_list, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("type", "")).lower() != "password_reset":
+                    continue
+                if str(item.get("status", "pending")).lower() != "pending":
+                    continue
+                target_uid = str(item.get("user_id", "") or "")
+                target = users.get(target_uid, {}) if isinstance(users, dict) else {}
+                password_reset_requests.append({
+                    "id": str(item.get("id", "") or ""),
+                    "username": str(item.get("username") or (target.get("username") if isinstance(target, dict) else "") or "Account"),
+                    "reason": str(item.get("reason", "Password reset requested") or "Password reset requested")[:240],
+                    "timestamp": int(item.get("timestamp", 0) or 0),
+                })
+            password_reset_requests.sort(key=lambda item: item["timestamp"], reverse=True)
+            return jsonify({
+                "ok": True,
+                "data": {
+                    "total_accounts": len(users) if isinstance(users, dict) else 0,
+                    "admin_accounts": sum(
+                        1 for _, item in user_entries
+                        if isinstance(item, dict) and str(item.get("role", "")).lower() == "admin"
+                    ),
+                    "pending_requests": pending_requests,
+                    "accounts": accounts,
+                    "password_reset_requests": password_reset_requests,
+                    "connected": bool(bot_data.get("connected")),
+                    "gateway_latency_ms": bot_data.get("gateway_latency_ms"),
+                    "username": str(bot_data.get("username") or "—"),
+                    "user_id": str(bot_data.get("user_id") or "—"),
+                },
+            })
 
         @self.app.get("/api/dash/activity")
         def api_dash_activity() -> Any:
@@ -2939,10 +3189,16 @@ class WebPanel:
             users = self._load_dashboard_users()
 
             if req_type == "password_reset":
+                if not self._valid_csrf_token(request.headers.get("X-CSRF-Token", "")):
+                    return jsonify({"ok": False, "error": "Session expired"}), 403
+                if not self._is_owner_session():
+                    return jsonify({"ok": False, "error": "Owner approval required"}), 403
+                if str(req.get("status", "pending")).lower() != "pending":
+                    return jsonify({"ok": False, "error": "Request already resolved"}), 409
                 target_uid = str(data.get("user_id") or req.get("user_id") or "").strip()
                 if not target_uid or target_uid not in users:
                     return jsonify({"ok": False, "error": "Target user not found"}), 404
-                new_pw = data.get("password") or secrets.token_urlsafe(10)
+                new_pw = secrets.token_urlsafe(18)
                 user_entry = users.get(target_uid) or {}
                 user_entry["password_hash"] = self._hash_pw(new_pw)
                 user_entry["last_seen_at"] = int(time.time())
@@ -2959,9 +3215,10 @@ class WebPanel:
                 req["status"] = "approved"
                 req["approved_uid"] = str(target_uid)
                 req["resolved_type"] = "password_reset"
+                req["resolved_at"] = int(time.time())
                 self._save_access_requests(reqs)
                 self._record_user_activity(session.get("user_id", ""), "request_approve", f"Approved password reset for {target_uid}", request.remote_addr or "")
-                return jsonify({"ok": True, "user_id": str(target_uid), "password": new_pw})
+                return jsonify({"ok": True, "username": str(user_entry.get("username") or target_uid), "password": new_pw, "password_delivery": "show_once"})
 
             # Generate a random user_id and password for the new visitor account
             new_uid = data.get("user_id") or f"visitor_{secrets.token_hex(4)}"
@@ -3012,21 +3269,6 @@ class WebPanel:
                 req_type = str((req or {}).get("type", "access")).lower()
 
                 if req_type == "password_reset":
-                    target_uid = str(req.get("user_id") or "").strip()
-                    if not target_uid or target_uid not in users:
-                        continue
-                    new_pw = secrets.token_urlsafe(10)
-                    user_entry = users.get(target_uid) or {}
-                    user_entry["password_hash"] = self._hash_pw(new_pw)
-                    user_entry["last_seen_at"] = now
-                    timeline = user_entry.get("last_actions") if isinstance(user_entry.get("last_actions"), list) else []
-                    timeline.append({"ts": now, "action": "password_reset", "details": f"Bulk approved reset request {req_id}", "ip": str(request.remote_addr or "")[:64]})
-                    user_entry["last_actions"] = timeline[-50:]
-                    users[target_uid] = user_entry
-                    req["status"] = "approved"
-                    req["approved_uid"] = str(target_uid)
-                    req["resolved_type"] = "password_reset"
-                    approved.append({"request_id": req_id, "user_id": str(target_uid), "password": new_pw})
                     continue
 
                 new_uid = f"visitor_{secrets.token_hex(4)}"

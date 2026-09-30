@@ -14,7 +14,8 @@
       <div class="brand"><span class="dot"></span> ARIA ACCESS</div>
       <div class="nav-links">
         <a href="/home">Home</a>
-        <a href="/request-access">Request Access</a>
+        <a href="/features">Features</a>
+        <a href="/signup">Create account</a>
         <a href="/reset-password">Reset Password</a>
         <a href="/tos">Terms</a>
       </div>
@@ -26,7 +27,7 @@
           <span class="kicker"><i></i> Secure Entry</span>
           <h1 class="page-title">__TITLE__</h1>
           <p class="page-sub">__SUBTITLE__</p>
-          <div class="hero-note">Approved users only <strong>session-locked access</strong></div>
+          <div class="hero-note">Account access <strong>instance setup after sign in</strong></div>
         </div>
         <div class="hero-stack">
           <div class="metric-card">
@@ -42,19 +43,18 @@
         </div>
       </div>
       <div class="panel-body">
+        __SUCCESS_BLOCK__
         __ERROR_BLOCK__
 
         <div class="panel-form-shell">
           <div class="form-card">
             <div class="eyebrow">Credential Form</div>
             <form class="form" method="post" action="/login?mode=__MODE__">
+              <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
               <div class="field">
-                <label>User ID</label>
-                <input type="text" name="user_id" placeholder="Your Discord user ID" autocomplete="username" required />
+                <label>Username</label>
+                <input type="text" name="username" placeholder="Your username" autocomplete="username" required />
               </div>
-
-              __USERNAME_FIELD__
-              __BOT_TOKEN_FIELD__
 
               <div class="field">
                 <label>Password</label>
@@ -82,21 +82,22 @@
             </form>
 
             <div class="tiny mt-12">
-              __TOGGLE_PREFIX__<a href="__TOGGLE_LINK__" class="toggle-link">__TOGGLE_TEXT__</a>
+              New to Aria? <a href="/signup" class="toggle-link">Create account</a>
             </div>
           </div>
 
           <div class="aside-card">
             <div class="eyebrow">Before You Enter</div>
             <ul class="aside-list">
-              <li><strong>Approval First</strong> Use the access route if your user ID has not been approved yet.</li>
-              <li><strong>Instance Aware</strong> Regular users are scoped to their own linked panel instance.</li>
-              <li><strong>Fast Return</strong> Remembered sessions reduce friction when you come back.</li>
+              <li><strong>One account</strong> Sign in with the username you chose during registration.</li>
+              <li><strong>Link once</strong> New accounts connect an instance before opening the dashboard.</li>
+              <li><strong>Fast return</strong> Remembered sessions reduce friction when you come back.</li>
             </ul>
             <div class="footer-links mt-12">
-              <a href="/request-access">Request Access</a>
+              <a href="/signup">Create account</a>
               <a href="/reset-password">Reset Password</a>
               <a href="/privacy">Privacy</a>
+              <a href="/privacy#cookies">Cookie Policy</a>
               <a href="/tos">Terms</a>
             </div>
           </div>

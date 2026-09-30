@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="__CSRF_TOKEN__">
     <title>Aria Dashboard</title>
     <link rel="icon" type="image/png" href="/static/images/aria-favicon.png">
     <link rel="shortcut icon" type="image/png" href="/static/images/aria-favicon.png">
@@ -11,9 +12,20 @@
 </head>
 <body class="dashboard-mode">
 
-    <div id="globalLoader">
-        <div class="loader-ring"></div>
-        <div class="loader-text">Aria — Loading</div>
+    <div id="globalLoader" role="status" aria-live="polite">
+        <div class="loader-console">
+            <div class="loader-brand-row">
+                <img src="/static/images/aria-favicon.png" alt="" class="loader-brand-mark">
+                <div class="loader-brand-copy"><strong>Aria</strong><span>runtime console</span></div>
+                <span class="loader-live-tag"><i></i> boot</span>
+            </div>
+            <div class="loader-progress-row"><div class="loader-ring"></div><div><div class="loader-text">Establishing session</div><div class="loader-subtext">Connecting dashboard surfaces</div></div></div>
+            <div class="loader-log">
+                <div><span class="loader-log-dot"></span><span>INTERFACE / SHELL READY</span></div>
+                <div><span class="loader-log-dot"></span><span>ACCOUNT / VERIFYING SESSION</span></div>
+                <div><span class="loader-log-dot"></span><span id="loaderStatus">RUNTIME / LOADING LIVE DATA</span></div>
+            </div>
+        </div>
     </div>
 
     <div id="ariaToastHost"></div>
@@ -75,6 +87,10 @@
                 Instances
             </li>
             <li class="nav-group-label" aria-hidden="true">Administration</li>
+            <li class="nav-item" data-section="owner" data-owner-only="true" hidden>
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l6 3v5c0 3.5-2.5 6.3-6 8-3.5-1.7-6-4.5-6-8V5l6-3z"/><path d="M7.5 10l1.7 1.7 3.5-3.5"/></svg>
+                Owner Panel
+            </li>
             <li class="nav-item" data-section="chat" data-admin-only="true">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h16v10H4l-2 3v-3z"/><circle cx="5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1" fill="currentColor" stroke="none"/></svg>
                 Support Chat
@@ -325,6 +341,101 @@
 
         </section>
 
+        <section class="section" id="section-owner" data-owner-only="true" hidden>
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Owner Panel</div>
+                    <div class="section-sub">Aria control plane · master owner access</div>
+                </div>
+                <span class="table-badge">owner</span>
+            </div>
+
+            <div class="cards-grid cards-grid-owner">
+                <div class="card">
+                    <div class="card-label">Dashboard Accounts</div>
+                    <div class="card-value" id="ownerAccountTotal">—</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Admin Accounts</div>
+                    <div class="card-value" id="ownerAdminTotal">—</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Pending Requests</div>
+                    <div class="card-value" id="ownerPendingTotal">—</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Gateway</div>
+                    <div class="card-value plain" id="ownerGatewayState">Loading</div>
+                    <div class="card-sub" id="ownerGatewayLatency">Latency —</div>
+                </div>
+            </div>
+
+            <div class="owner-action-grid" aria-label="Owner controls">
+                <button class="owner-action" type="button" onclick="navigateTo('users')">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="7" r="3"/><path d="M2.5 17c.5-3 2.3-4.5 5.5-4.5 1.5 0 2.7.4 3.7 1.2M14 11v6m-3-3h6"/></svg>
+                    <span>Access control</span>
+                </button>
+                <button class="owner-action" type="button" onclick="navigateTo('hosted')">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="15" height="5.5" rx="1"/><rect x="2.5" y="11.5" width="15" height="5.5" rx="1"/><path d="M5.5 5.75h.01M5.5 14.25h.01"/></svg>
+                    <span>Hosted instances</span>
+                </button>
+                <button class="owner-action" type="button" onclick="navigateTo('logs')">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h14v14H3zM6 7h8M6 10h8M6 13h5"/></svg>
+                    <span>Runtime events</span>
+                </button>
+                <button class="owner-action" type="button" onclick="navigateTo('settings')">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2m0 11v2M2.5 10h2m11 0h2M4.7 4.7l1.4 1.4m7.8 7.8 1.4 1.4m0-10.6-1.4 1.4m-7.8 7.8-1.4 1.4"/></svg>
+                    <span>Runtime config</span>
+                </button>
+            </div>
+
+            <div class="table-card owner-management-card">
+                <div class="table-header owner-management-header">
+                    <span class="table-title">Account roster</span>
+                    <div class="owner-table-tools">
+                        <span class="table-badge" id="ownerAccountBadge">0 accounts</span>
+                        <input id="ownerAccountSearch" class="setting-input owner-search" type="search" placeholder="Filter names" oninput="filterOwnerAccounts()" aria-label="Filter account names">
+                    </div>
+                </div>
+                <table class="data-table owner-account-table">
+                    <thead><tr><th>Username</th><th>Role</th><th>Joined</th><th>Last sign in</th></tr></thead>
+                    <tbody id="ownerAccountBody"><tr><td colspan="4" class="empty-row">Loading accounts…</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="table-card owner-reset-card">
+                <div class="table-header">
+                    <span class="table-title">Password reset requests</span>
+                    <span class="table-badge" id="ownerResetBadge">0 pending</span>
+                </div>
+                <div class="owner-reset-list" id="ownerResetRequestsList">
+                    <div class="log-loading">Loading requests…</div>
+                </div>
+                <div class="owner-reset-message settings-msg" id="ownerResetMessage" role="status" aria-live="polite"></div>
+            </div>
+
+            <div class="table-card owner-identity-panel">
+                <div class="table-header">
+                    <span class="table-title">Connected Identity</span>
+                    <span class="table-badge" id="ownerIdentityState">—</span>
+                </div>
+                <div class="owner-identity-values">
+                    <span id="ownerIdentityName">—</span>
+                    <code id="ownerIdentityId">—</code>
+                </div>
+            </div>
+
+            <div class="owner-reset-overlay" id="ownerResetCredential" hidden>
+                <section class="owner-reset-dialog" role="dialog" aria-modal="true" aria-labelledby="ownerResetDialogTitle">
+                    <span class="home-feature-num">CREDENTIAL ROTATED / ONE-TIME VIEW</span>
+                    <h2 id="ownerResetDialogTitle">Reset approved</h2>
+                    <p><span id="ownerResetCredentialUser">Account</span> can sign in with this temporary password. It is not saved in the account list.</p>
+                    <div class="owner-reset-secret-row"><code id="ownerResetCredentialValue"></code><button class="btn btn-ghost" type="button" onclick="copyOwnerResetCredential()" aria-label="Copy temporary password" title="Copy temporary password">Copy</button></div>
+                    <div class="owner-reset-dialog-actions"><button class="btn btn-primary" type="button" onclick="dismissOwnerResetCredential()">Done</button></div>
+                </section>
+            </div>
+        </section>
+
         <!-- ══════════════════════════════════════════════
              COMMANDS
         ══════════════════════════════════════════════ -->
@@ -536,30 +647,6 @@
                 </div>
             </div>
 
-            <!-- Per-server boost table -->
-            <div class="table-card table-card-mb-md">
-                <div class="table-header">
-                    <span class="table-title">Server Distribution</span>
-                    <span class="table-badge" id="boostServerCount">0 servers</span>
-                </div>
-                <table class="data-table">
-                    <thead><tr><th>Server ID</th><th>Boosts Applied</th><th>Bar</th></tr></thead>
-                    <tbody id="boostServerBody">
-                        <tr><td colspan="3" class="empty-row">Loading…</td></tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Raw extra data -->
-            <div class="table-card">
-                <div class="table-header">
-                    <span class="table-title">Extra Fields</span>
-                    <span class="table-badge">all data</span>
-                </div>
-                <div id="boostExtraCards" class="boost-extra-grid">
-                    <div class="log-loading">Loading…</div>
-                </div>
-            </div>
         </section>
 
         <!-- ══════════════════════════════════════════════

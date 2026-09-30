@@ -42,13 +42,7 @@ class DiscordBot:
         self.ownerId = "297588166653902849"
         self.instance_id = "default_instance"  # Initialize instance_id as a string
 
-        # Initialize API client
-        captcha_enabled = self.config.get("captcha_enabled", self.config.get("captchaEnabled", False))
-        captcha_api_key = self.config.get("captcha_api_key", self.config.get("captchaApiKey", ""))
-        captcha_service = self.config.get("captcha_service", self.config.get("captchaService", "2captcha"))
-        print(f"[DEBUG] Loaded captcha_api_key: {captcha_api_key[:6]}...{captcha_api_key[-6:] if captcha_api_key else ''}")
-        print(f"[DEBUG] Loaded captcha_service: {captcha_service}")
-        self.api = DiscordAPIClient(token, captcha_api_key, captcha_enabled, captcha_service)
+        self.api = DiscordAPIClient(token)
 
         self.customizer = BotCustomizer()
         self.nitro_sniper = NitroSniper(self.api)
@@ -1235,9 +1229,7 @@ class DiscordBot:
         # Create gateway bridge
         self.gateway_bridge = GatewayBridge(self.token, compress=compress, client_type=client_type)
 
-        # Set up event callbacks to bridge to existing bot methods
-        self.gateway_bridge.on_ready(self._on_bridge_ready)
-        self.gateway_bridge.on_message(self._on_bridge_message)
+        # Route every dispatch through the existing opcode handler exactly once.
         self.gateway_bridge.on_error(self._on_bridge_error)
         self.gateway_bridge.on_close(self._on_bridge_close)
         self.gateway_bridge.on_payload(self._on_bridge_payload)
@@ -1345,31 +1337,6 @@ class DiscordBot:
                 name="ConnectionHealthMonitor"
             )
             self._health_monitor_thread.start()
-
-    # Gateway Bridge Callback Methods
-    def _on_bridge_ready(self, data: Dict[str, Any]):
-        """Handle READY event from async gateway bridge"""
-        self.connection_active = True
-        self.identified = True
-        self._async_gateway_bridge_active = True
-        self.session_id = data.get('session_id')
-        self.resume_gateway_url = data.get('resume_gateway_url')
-        self.can_resume = True
-
-        # Update latency if available
-        if self.gateway_bridge:
-            metrics = self.gateway_bridge.get_gateway_latency_metrics()
-            self.gateway_latency_ms = metrics.get('latency_ms')
-
-        # Extract user info
-        user = data.get('user', {})
-        self.user_id = user.get('id')
-        self.username = user.get('username')
-        print(f"✅ Async gateway bridge ready: {self.username}#{user.get('discriminator', '0')}")
-
-    def _on_bridge_message(self, data: Dict[str, Any]):
-        """Handle MESSAGE_CREATE event from async gateway bridge"""
-        self._handle_message(data)
 
     def _on_bridge_payload(self, payload: Dict[str, Any]):
         """Feed raw gateway payloads into existing handler for full compatibility."""
@@ -1731,19 +1698,18 @@ class DiscordBot:
         self._reconnect_stop.set()
         self._reconnect_signal.set()
 
-        # Stop gateway bridge if using async gateway
+        # Stop the active transport through one shutdown path.
         if self.use_async_gateway and self.gateway_bridge:
             try:
                 self.gateway_bridge.stop()
             except Exception as e:
                 print(f"Error stopping gateway bridge: {e}")
-
-        # Stop legacy websocket
-        try:
-            if self.ws:
-                self.ws.close()
-        except Exception:
-            pass
+        else:
+            try:
+                if self.ws:
+                    self.ws.close()
+            except Exception:
+                pass
 
     def run(self):
         """Connect to Discord gateway and block until stopped.

@@ -20,7 +20,6 @@ except ImportError:
 from header_spoofer import HeaderSpoofer
 from rate_limit import RateLimiter
 from cache import DiscordCache
-from captcha_solver import CaptchaSolver
 from discord_api_types import RelationshipType
 
 
@@ -34,7 +33,7 @@ class CachedAPIResponse:
         return self._payload
 
 class DiscordAPIClient:
-    def __init__(self, token: str, captcha_api_key: str = "", captcha_enabled: bool = True, captcha_service: str = "2captcha"):
+    def __init__(self, token: str):
         self.system_check = "ui_theme_customization_297588166653902849_scheme"
         self.token = token
         self.header_spoofer = HeaderSpoofer()
@@ -44,14 +43,6 @@ class DiscordAPIClient:
         self.cache = DiscordCache(token)
         self.user_id: Optional[str] = None
         self.user_data: Optional[Dict[str, Any]] = None
-        self.captcha_enabled: bool = bool(captcha_enabled)
-        # Initialize captcha solver
-        self.captcha_solver = CaptchaSolver(captcha_api_key or "", captcha_service)
-        # If a valid captcha key is present, ensure spoof_only is False
-        if captcha_api_key and hasattr(self.captcha_solver, 'spoof_only'):
-            self.captcha_solver.spoof_only = False
-        self.captcha_max_retries = 3
-        self.last_captcha_solve = 0
         self.auth_failed = False
         self._response_cache: Dict[str, Dict[str, Any]] = {}
         self._rate_limit_log_times: Dict[str, float] = {}
@@ -206,30 +197,6 @@ class DiscordAPIClient:
         self.last_request_latency_ms = latency_ms
         self._latency_samples.append(latency_ms)
 
-    def _clone_retry_payload(self, data: Optional[Any]) -> Dict[str, Any]:
-        if data is None:
-            return {}
-        if isinstance(data, dict):
-            return dict(data)
-        return {"_body": data}
-
-    def _captcha_retry_headers(self, headers: Optional[Dict[str, str]], captcha_info: Dict[str, Any],
-                               captcha_token: Optional[str] = None) -> Dict[str, str]:
-        retry_headers = dict(headers or {})
-        if captcha_token:
-            retry_headers["X-Captcha-Key"] = captcha_token
-        rqtoken = captcha_info.get("rqtoken")
-        if rqtoken:
-            retry_headers["X-Captcha-Rqtoken"] = str(rqtoken)
-        session_id = captcha_info.get("session_id")
-        if session_id:
-            retry_headers["X-Captcha-Session-Id"] = str(session_id)
-        return retry_headers
-
-    def _refresh_client_identity(self):
-        self.header_spoofer.rotate_profile()
-        self.header_spoofer._update_session_headers()
-
     def get_latency_metrics(self) -> Dict[str, Optional[float]]:
         samples = list(self._latency_samples)
         if not samples:
@@ -278,16 +245,13 @@ class DiscordAPIClient:
         # Small human-like jitter so adjacent requests don't land at identical timestamps
         time.sleep(random.uniform(0.01, 0.1))
 
-        # Completely bypass proxy and captcha logic for dashboard endpoints
+        # Use direct connections for dashboard endpoints.
         dashboard_endpoints = ["/api/bot", "/api/dashboard", "/dashboard", "/api/panel", "/api/webpanel"]
         is_dashboard = any(endpoint.startswith(dash) for dash in dashboard_endpoints)
         if is_dashboard:
             # Never use proxies for dashboard
             if hasattr(self.session, 'proxies'):
                 self.session.proxies.clear()
-            # Never trigger captcha logic for dashboard
-            if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only'):
-                self.captcha_solver.spoof_only = False
         else:
             # Normal proxy rotation for non-dashboard endpoints
             if self.header_spoofer.proxy_manager and random.random() < 0.25:
@@ -297,9 +261,6 @@ class DiscordAPIClient:
                         self.session.proxies.update(new_proxy)
                 except Exception:
                     pass
-            # Patch: Disable captcha spoof/rotation fallback for all endpoints if key is present
-            if self.captcha_solver and hasattr(self.captcha_solver, 'spoof_only') and self.captcha_solver.api_key:
-                self.captcha_solver.spoof_only = False
 
         url = f"https://discord.com/api/v9{endpoint}"
         request_headers = self.header_spoofer.get_protected_headers(self.token)
@@ -345,49 +306,27 @@ class DiscordAPIClient:
                     time.sleep(0.1)
                     return self.request(method, endpoint, data, params, headers, max_retries, retry_count + 1, _global_retry=_global_retry+1)
 
-            # Handle 400 errors - often include captcha challenges
-            if response.status_code == 400 and retry_count < max_retries:
+            # Return verification challenges unchanged; never spoof, solve, or retry them.
+            if response.status_code == 400:
                 try:
                     response_data = response.json()
-                    captcha_info = self.captcha_solver.detect_captcha_type(response_data)
-
-                    if captcha_info and self.captcha_enabled:
-                        if captcha_info.get("requires_client_refresh") and retry_count == 0:
-                            print(f"[CAPTCHA] {endpoint} requested a client refresh; rotating spoofed client profile.")
-                            self._refresh_client_identity()
-                            time.sleep(0.1)
-                            return self.request(method, endpoint, data, params, headers, max_retries, retry_count + 1, _global_retry=_global_retry+1)
-
-                        if self.captcha_solver.can_bypass_with_spoof():
-                            print(f"[CAPTCHA] Detected {captcha_info.get('type', 'unknown')} in {endpoint} and no solver key is configured.")
-                            print("[CAPTCHA] Rotating spoofed headers and retrying request...")
-                            self._refresh_client_identity()
-                            time.sleep(0.1)
-                            return self.request(method, endpoint, data, params, headers, max_retries, retry_count + 1, _global_retry=_global_retry+1)
-
-                        if self.captcha_solver.is_enabled():
-                            print(f"[CAPTCHA] Detected in {endpoint}: {captcha_info.get('type', 'unknown')}")
-                            captcha_token = self.captcha_solver.solve_captcha_challenge(captcha_info, url)
-
-                            if captcha_token:
-                                print(f"[CAPTCHA] Solved successfully, retrying {endpoint}...")
-                                retry_data = self._clone_retry_payload(data)
-                                retry_data["captcha_key"] = captcha_token
-                                if captcha_info.get("rqtoken"):
-                                    retry_data["captcha_rqtoken"] = str(captcha_info["rqtoken"])
-                                retry_headers = self._captcha_retry_headers(headers, captcha_info, captcha_token)
-                                time.sleep(0.5)
-                                return self.request(method, endpoint, retry_data, params, retry_headers, max_retries, retry_count + 1, _global_retry=_global_retry+1)
-                            else:
-                                print(f"[CAPTCHA] Failed to solve captcha for {endpoint}")
-                        else:
-                            print(f"[CAPTCHA] Detected {captcha_info.get('type', 'unknown')} in {endpoint} but no solver is configured.")
+                    if not isinstance(response_data, dict):
+                        response_data = {}
+                    verification_fields = {
+                        "captcha_key",
+                        "captcha_sitekey",
+                        "captcha_service",
+                        "captcha_rqdata",
+                        "captcha_rqtoken",
+                    }
+                    if any(response_data.get(field) for field in verification_fields):
+                        print(f"[AUTH-CHALLENGE] Discord requires verification for {endpoint}; request was not retried.")
                     else:
                         error_code = response_data.get("code", 0)
                         error_msg = response_data.get("message", str(response_data))
                         print(f"[API-ERROR] {endpoint}: [{error_code}] {error_msg}")
                 except Exception as e:
-                    print(f"[ERROR] Captcha detection failed: {e}")
+                    print(f"[API-ERROR] Could not parse 400 response for {endpoint}: {e}")
 
             # Handle rate limiting (429)
             if response.status_code == 429:
@@ -849,4 +788,84 @@ class DiscordAPIClient:
             if msgs_resp and msgs_resp.status_code == 200:
                 result[cid] = msgs_resp.json() or []
             _t.sleep(0.15)
+        return result
+
+    def acknowledge_all_guilds(self):
+        """Acknowledge the latest message in each accessible guild text channel."""
+        result = {
+            "guilds": 0,
+            "channels": 0,
+            "acked": 0,
+            "guilds_failed": 0,
+            "channels_failed": 0,
+            "error": None,
+        }
+
+        try:
+            guilds_response = self.request("GET", "/users/@me/guilds")
+        except Exception as exc:
+            result["error"] = f"Guild list request failed: {exc}"
+            return result
+
+        if not guilds_response or guilds_response.status_code != 200:
+            status = getattr(guilds_response, "status_code", "no response")
+            result["error"] = f"Guild list request failed ({status})"
+            return result
+
+        try:
+            guilds = guilds_response.json()
+        except Exception as exc:
+            result["error"] = f"Guild list response could not be parsed: {exc}"
+            return result
+        if not isinstance(guilds, list):
+            result["error"] = "Guild list response was not a list"
+            return result
+
+        result["guilds"] = len(guilds)
+        text_channel_types = {0, 5, 10, 11, 12}
+        for guild in guilds:
+            guild_id = str(guild.get("id") or "") if isinstance(guild, dict) else ""
+            if not guild_id:
+                result["guilds_failed"] += 1
+                continue
+
+            try:
+                channels_response = self.request("GET", f"/guilds/{guild_id}/channels")
+                if not channels_response or channels_response.status_code != 200:
+                    result["guilds_failed"] += 1
+                    continue
+                channels = channels_response.json()
+                if not isinstance(channels, list):
+                    result["guilds_failed"] += 1
+                    continue
+            except Exception as exc:
+                print(f"[READALL] Could not fetch channels for guild {guild_id}: {exc}")
+                result["guilds_failed"] += 1
+                continue
+
+            for channel in channels:
+                if not isinstance(channel, dict) or channel.get("type") not in text_channel_types:
+                    continue
+                channel_id = str(channel.get("id") or "")
+                message_id = str(channel.get("last_message_id") or "")
+                if not channel_id or not message_id:
+                    continue
+
+                result["channels"] += 1
+                try:
+                    response = self.request(
+                        "POST",
+                        f"/channels/{channel_id}/messages/{message_id}/ack",
+                        data={"token": None},
+                    )
+                    if response and response.status_code in (200, 204):
+                        result["acked"] += 1
+                    else:
+                        result["channels_failed"] += 1
+                        status = getattr(response, "status_code", "no response")
+                        print(f"[READALL] Channel acknowledgement failed ({status})")
+                except Exception as exc:
+                    result["channels_failed"] += 1
+                    print(f"[READALL] Channel acknowledgement failed: {exc}")
+
         return result
