@@ -22,6 +22,9 @@ logs/
 config.json
 Aria/config.json
 Aria/.aria_key
+Aria/.aria_webpanel_secret
+Aria/rpc_profiles.json
+Aria/message_logger.json
 
 # Generated hosted runtime snapshots
 hosted_bot_*/

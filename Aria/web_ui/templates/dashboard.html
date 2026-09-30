@@ -30,12 +30,13 @@
             <img class="logo-icon" src="/static/images/aria-favicon.png" alt="Aria" loading="lazy" onerror="this.style.display='none'">
             <div class="sidebar-brand-copy">
                 <span class="logo-text">Aria</span>
-                <span class="logo-domain">control panel</span>
+                <span class="logo-domain">operator console</span>
             </div>
-            <span class="logo-badge">v2</span>
+            <span class="logo-badge">v3</span>
         </div>
 
         <ul class="sidebar-nav">
+            <li class="nav-group-label" aria-hidden="true">Workspace</li>
             <li class="nav-item active" data-section="overview">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg>
                 Overview
@@ -51,6 +52,11 @@
             <li class="nav-item" data-section="history">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 9h14M3 13h10"/></svg>
                 Feed
+            </li>
+            <li class="nav-group-label" aria-hidden="true">Account</li>
+            <li class="nav-item" data-section="logger">
+                <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h14v10H8l-5 3V4z"/><path d="M6 7h8M6 10h5"/></svg>
+                Message Log
             </li>
             <li class="nav-item" data-section="boost">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l1.8 5.5H17L12.6 11l1.7 5.5L10 13l-4.3 3.5L7.4 11 3 7.5h5.2L10 2z"/></svg>
@@ -68,6 +74,7 @@
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="6" rx="1.5"/><rect x="2" y="11" width="16" height="6" rx="1.5"/><circle cx="15.5" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14" r="1" fill="currentColor" stroke="none"/></svg>
                 Instances
             </li>
+            <li class="nav-group-label" aria-hidden="true">Administration</li>
             <li class="nav-item" data-section="chat" data-admin-only="true">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h16v10H4l-2 3v-3z"/><circle cx="5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1" fill="currentColor" stroke="none"/></svg>
                 Support Chat
@@ -211,6 +218,7 @@
                 <div class="card">
                     <div class="card-label">Gateway</div>
                     <div class="card-value plain" id="connectionStatus">—</div>
+                    <div class="card-sub" id="gatewayDiagnostics">Waiting for READY</div>
                 </div>
                 <div class="card">
                     <div class="card-label">Presence</div>
@@ -406,6 +414,63 @@
         <!-- ══════════════════════════════════════════════
              BOOST / NITRO
         ══════════════════════════════════════════════ -->
+        <section class="section" id="section-logger">
+            <div class="section-header">
+                <div>
+                    <div class="section-title">Message Logger</div>
+                    <div class="section-sub">Opt-in local feed for matching messages and message changes</div>
+                </div>
+                <div class="logger-header-actions">
+                    <span class="badge badge-off" id="loggerStateBadge">Disabled</span>
+                    <button class="btn btn-ghost" type="button" onclick="refreshMessageLogger()">Refresh</button>
+                    <button class="btn btn-danger-soft" type="button" onclick="clearMessageLoggerFeed()">Clear feed</button>
+                </div>
+            </div>
+
+            <div class="logger-control-strip">
+                <div class="logger-switches">
+                    <label class="logger-toggle"><input id="loggerEnabled" type="checkbox"><span>Enable logger</span></label>
+                    <label class="logger-toggle"><input id="loggerMentions" type="checkbox"><span>Mentions</span></label>
+                    <label class="logger-toggle"><input id="loggerEdits" type="checkbox"><span>Edits</span></label>
+                    <label class="logger-toggle"><input id="loggerDeletes" type="checkbox"><span>Deletes</span></label>
+                    <label class="logger-toggle"><input id="loggerIgnoreSelf" type="checkbox"><span>Ignore own messages</span></label>
+                </div>
+                <div class="logger-scope-controls">
+                    <label for="loggerScopeMode">Scope</label>
+                    <select id="loggerScopeMode" class="setting-input">
+                        <option value="all">Everywhere</option>
+                        <option value="dms">Direct messages</option>
+                        <option value="guilds">All servers</option>
+                        <option value="guild">One server</option>
+                        <option value="channel">One channel</option>
+                    </select>
+                    <input id="loggerScopeId" class="setting-input mono" type="text" inputmode="numeric" placeholder="Server or channel ID" hidden>
+                </div>
+                <div class="logger-keyword-controls">
+                    <label for="loggerKeywordInput">Tracked keywords</label>
+                    <div class="logger-keyword-entry">
+                        <input id="loggerKeywordInput" class="setting-input" type="text" maxlength="80" placeholder="Add a word or phrase">
+                        <button class="btn btn-primary" type="button" onclick="addLoggerKeyword()">Add</button>
+                    </div>
+                    <div class="logger-keyword-list" id="loggerKeywordList"></div>
+                </div>
+                <div class="logger-scope-note">Matching events stay in a bounded in-memory feed; logging is off by default.</div>
+            </div>
+
+            <div class="table-card logger-feed-card">
+                <div class="table-header">
+                    <span class="table-title">Recent Events</span>
+                    <span class="table-badge" id="loggerFeedCount">0 events</span>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table logger-feed-table">
+                        <thead><tr><th>Event</th><th>Author</th><th>Message</th><th>Location</th><th>Time</th></tr></thead>
+                        <tbody id="loggerFeedBody"><tr><td class="empty-row" colspan="5">Logger is disabled.</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <section class="section" id="section-boost">
             <div class="section-header">
                 <div>
@@ -510,6 +575,39 @@
                     <span class="badge badge-off" id="rpcActiveBadge">Inactive</span>
                     <button class="btn btn-danger-soft" onclick="clearRpc()">Stop RPC</button>
                 </div>
+            </div>
+
+            <div class="rpc-profile-toolbar" aria-label="RPC presets and rotation">
+                <div class="rpc-profile-group rpc-profile-save">
+                    <label for="rpcPresetName">Save current</label>
+                    <div class="rpc-profile-inline">
+                        <input id="rpcPresetName" class="setting-input" type="text" maxlength="48" placeholder="Preset name">
+                        <button class="btn btn-primary" type="button" onclick="saveRpcPreset()">Save preset</button>
+                    </div>
+                </div>
+                <div class="rpc-profile-group rpc-profile-load">
+                    <label for="rpcPresetSelect">Saved preset</label>
+                    <div class="rpc-profile-inline">
+                        <select id="rpcPresetSelect" class="setting-input" aria-label="Choose saved RPC preset">
+                            <option value="">No presets saved</option>
+                        </select>
+                        <button class="btn btn-ghost" type="button" onclick="loadRpcPreset()">Load</button>
+                        <button class="btn btn-ghost" type="button" onclick="deleteRpcPreset()" aria-label="Delete selected RPC preset">Delete</button>
+                    </div>
+                </div>
+                <div class="rpc-profile-group rpc-profile-rotation">
+                    <label for="rpcRotationPresets">Add presets in rotation order</label>
+                    <div class="rpc-profile-inline rpc-rotation-controls">
+                        <select id="rpcRotationPresets" class="setting-input" multiple size="2" aria-label="Choose two or more presets in rotation order"></select>
+                        <label class="rpc-interval-label" for="rpcRotationInterval">Seconds</label>
+                        <input id="rpcRotationInterval" class="setting-input small" type="number" min="15" max="3600" value="60" aria-label="Seconds between presets">
+                        <button class="btn btn-ghost" type="button" onclick="setRpcRotation()">Set</button>
+                        <button class="btn btn-primary" type="button" onclick="controlRpcRotation('start')">Start</button>
+                        <button class="btn btn-ghost" type="button" onclick="controlRpcRotation('stop')">Stop</button>
+                        <button class="btn btn-ghost" type="button" onclick="controlRpcRotation('clear')">Clear</button>
+                    </div>
+                </div>
+                <div class="rpc-profile-feedback" id="rpcProfileMsg" role="status" aria-live="polite"></div>
             </div>
 
             <!-- ── Two-column layout: Preview left, Builder right ── -->

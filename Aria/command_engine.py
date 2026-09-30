@@ -337,7 +337,6 @@ def setup_commands_500(engine: CommandEngine) -> None:
     engine.register_command("system", "stop", "Stop the bot", ["exit", "quit"])
     engine.register_command("system", "restart", "Restart the bot", ["reboot"])
     engine.register_command("system", "status", "Show bot status")
-    engine.register_command("system", "ping", "Check bot latency", ["ms", "latency"])
     engine.register_command("system", "version", "Show Aria version")
     engine.register_command("system", "uptime", "Show bot uptime")
     engine.register_command("system", "config", "View bot configuration")

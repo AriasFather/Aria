@@ -2484,22 +2484,6 @@ def setup_bulk_commands(bot, delete_after_delay):
                 time.sleep(0.3)
         _send(ctx, _box("Clean", f"Deleted {deleted} of your messages"))
 
-    @bot.command(name="latency")
-    def latency_cmd(ctx, args):
-        t0 = time.time()
-        msg = ctx["api"].send_message(ctx["channel_id"], "> Ping...")
-        ms = int((time.time() - t0) * 1000)
-        if msg:
-            ctx["api"].edit_message(ctx["channel_id"], msg.get("id"), f"```Latency: {ms}ms```")
-
-    @bot.command(name="ping")
-    def ping_cmd(ctx, args):
-        t0 = time.time()
-        msg = ctx["api"].send_message(ctx["channel_id"], "> Ping...")
-        ms = int((time.time() - t0) * 1000)
-        if msg:
-            ctx["api"].edit_message(ctx["channel_id"], msg.get("id"), f"```Pong: {ms}ms```")
-
     @bot.command(name="commands")
     def commands_cmd(ctx, args):
         b = ctx["bot"]

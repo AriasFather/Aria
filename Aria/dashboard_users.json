@@ -1,21 +1,213 @@
 {
   "297588166653902849": {
-    "password_hash": "4e9036ea221b6acee54c7bf8b9a12f704ce4dad814ea5e998ff2921aaf86bae6",
+    "password_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
     "instance_id": "main",
-    "username": "Miscomprehend",
+    "username": "admin",
     "role": "admin",
     "created_at": 1776155963,
-    "last_login_at": 1776453014,
-    "last_seen_at": 1776453014,
-    "last_login_ip": "127.0.0.1",
-    "last_seen_ip": "127.0.0.1",
+    "last_login_at": 1790754580,
+    "last_seen_at": 1790754662,
     "last_actions": [
       {
-        "ts": 1776453014,
+        "ts": 1790754188,
         "action": "login",
         "details": "Dashboard sign in",
         "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754199,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754236,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754306,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754308,
+        "action": "navigate",
+        "details": "Opened analytics",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754308,
+        "action": "navigate",
+        "details": "Opened history",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754310,
+        "action": "navigate",
+        "details": "Opened boost",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754314,
+        "action": "navigate",
+        "details": "Opened hosted",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754317,
+        "action": "navigate",
+        "details": "Opened chat",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754318,
+        "action": "navigate",
+        "details": "Opened users",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754319,
+        "action": "navigate",
+        "details": "Opened settings",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754320,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754324,
+        "action": "navigate",
+        "details": "Opened analytics",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754324,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754325,
+        "action": "navigate",
+        "details": "Opened overview",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754329,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754331,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754332,
+        "action": "navigate",
+        "details": "Opened overview",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754336,
+        "action": "client_switch",
+        "details": "Switched client to vr",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754358,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754494,
+        "action": "client_switch",
+        "details": "Switched client to vr",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754511,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754580,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754654,
+        "action": "navigate",
+        "details": "Opened analytics",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754654,
+        "action": "navigate",
+        "details": "Opened history",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754655,
+        "action": "navigate",
+        "details": "Opened logger",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754656,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754657,
+        "action": "navigate",
+        "details": "Opened hosted",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754659,
+        "action": "navigate",
+        "details": "Opened chat",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754660,
+        "action": "navigate",
+        "details": "Opened logs",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754661,
+        "action": "navigate",
+        "details": "Opened settings",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754662,
+        "action": "navigate",
+        "details": "Opened settings",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790754662,
+        "action": "navigate",
+        "details": "Opened logs",
+        "ip": "127.0.0.1"
       }
-    ]
+    ],
+    "last_login_ip": "127.0.0.1",
+    "last_seen_ip": "127.0.0.1"
   }
 }

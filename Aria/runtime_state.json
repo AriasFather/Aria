@@ -3,5 +3,5 @@
     "enabled": true,
     "delay": 5.0
   },
-  "client_type": "web"
+  "client_type": "vr"
 }

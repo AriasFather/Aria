@@ -14,6 +14,7 @@ from anti_gc_trap import AntiGCTrap
 from giveaway import GiveawaySniper
 from header_spoofer import HeaderSpoofer
 from core.client.platform import CLIENT_PROFILES, normalize_client_type, normalize_status
+from message_logger import MessageLogger
 import queue
 import websocket
 # Removed incorrect import
@@ -52,6 +53,7 @@ class DiscordBot:
         self.customizer = BotCustomizer()
         self.nitro_sniper = NitroSniper(self.api)
         self.giveaway_sniper = GiveawaySniper(self.api)
+        self.message_logger = MessageLogger(os.path.join(os.path.dirname(os.path.abspath(__file__)), "message_logger.json"))
         self.anti_gc_trap = AntiGCTrap(self.api)
         self.protection_coordinator = self.api.header_spoofer
 
@@ -105,6 +107,10 @@ class DiscordBot:
         # Enhanced gateway connection management
         self._connection_lock = threading.Lock()
         self._connecting = False
+        self._reconnect_guard = threading.Lock()
+        self._reconnect_signal = threading.Event()
+        self._reconnect_stop = threading.Event()
+        self._reconnect_thread = None
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
         self._max_consecutive_failures = 15  # Increased from 10
@@ -128,6 +134,7 @@ class DiscordBot:
         # Gateway Bridge Support (for async gateway compatibility)
         self.use_async_gateway = self.config.get("use_async_gateway", False)
         self.gateway_bridge = None
+        self._async_gateway_bridge_active = False
 
         # Load persisted per-user prefixes
         self.user_prefixes_file = os.path.join(
@@ -138,7 +145,6 @@ class DiscordBot:
                 self.user_prefixes: Dict[str, str] = json.load(_f)
         except Exception:
             self.user_prefixes: Dict[str, str] = {}
-        # Persist on startup (creates file if absent)
         try:
             with open(self.user_prefixes_file, "w") as _f:
                 json.dump(self.user_prefixes, _f, indent=2)
@@ -150,10 +156,8 @@ class DiscordBot:
             return activity
 
         normalized = dict(activity)
-
         try:
-            normalized_type = int(normalized.get("type"))
-            normalized["type"] = normalized_type
+            normalized["type"] = int(normalized.get("type"))
         except Exception:
             pass
 
@@ -182,7 +186,7 @@ class DiscordBot:
                         value = value[3:]
                     if value.startswith("attachments/"):
                         value = f"mp:{value}"
-                    if value.startswith("https://cdn.discordapp.com/attachments/") or value.startswith("https://media.discordapp.net/attachments/"):
+                    if value.startswith(("https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments/")):
                         match = re.search(r"https?://(?:cdn\.discordapp\.com|media\.discordapp\.net)/attachments/(\d+)/(\d+)/([^?#]+)", value)
                         if match:
                             channel_id, attachment_id, filename = match.groups()
@@ -218,7 +222,6 @@ class DiscordBot:
                 normalized.pop("metadata", None)
         elif metadata is not None:
             normalized.pop("metadata", None)
-
         return normalized
 
     def get_user_prefix(self, user_id: str) -> str:
@@ -408,6 +411,7 @@ class DiscordBot:
             elif op == GatewayOpcodes.InvalidSession:  # op 9
                 resumable = bool(data.get("d", False))
                 print(f"\033[1;33m[GATEWAY]\033[0m op 9 INVALID SESSION — resumable={resumable}")
+                self._resume_timeout = None
                 if not resumable:
                     # Full re-identify required: discard saved session
                     self.session_id = None
@@ -424,6 +428,7 @@ class DiscordBot:
                 t = data.get("t")
                 
                 if t == "READY":
+                    self._resume_timeout = None
                     # Only process READY once per session to prevent duplicate connection messages
                     if self.identified:
                         return
@@ -490,6 +495,8 @@ class DiscordBot:
                     try:
                         mid = data["d"].get("id")
                         cid = data["d"].get("channel_id")
+                        cached_message = self._msg_cache.get(mid) if mid else None
+                        self.message_logger.on_message_delete(data["d"], cached_message, owner_id=self.user_id)
                         if mid and cid and mid in self._msg_cache:
                             self._snipe_cache[cid] = {
                                 "message": self._msg_cache[mid],
@@ -510,6 +517,8 @@ class DiscordBot:
                         mid = data["d"].get("id")
                         cid = data["d"].get("channel_id")
                         new_content = data["d"].get("content")
+                        before = self._msg_cache.get(mid) if mid else None
+                        self.message_logger.on_message_update(data["d"], before, owner_id=self.user_id)
                         if mid and cid and new_content and mid in self._msg_cache:
                             before = self._msg_cache[mid]
                             if before.get("content") != new_content:
@@ -694,16 +703,8 @@ class DiscordBot:
         stability_indicator = "🔴" if self._network_stability_score < 40 else "🟡" if self._network_stability_score < 70 else "🟢"
         print(f"\033[1;31m[GATEWAY ERROR]\033[0m [{error_type}] {error_str} (quality: {self._connection_quality_score}%, stability: {stability_indicator}{self._network_stability_score}%)")
 
-        # Trigger reconnection for recoverable errors with improved logic
         if self.running:
-            if error_type in ["CONNECTION_REFUSED", "CONNECTION_RESET", "REMOTE_HOST_LOST", "TIMEOUT", "UNKNOWN"]:
-                # Immediate reconnect for network issues
-                threading.Thread(target=self._auto_reconnect, daemon=True, name="GatewayErrorReconnect").start()
-            elif error_type in ["SSL_ERROR", "PROXY_ERROR"]:
-                # For SSL/Proxy errors, wait longer before retrying
-                time.sleep(5)  # Reduced from 10
-                if self.running:
-                    threading.Thread(target=self._auto_reconnect, daemon=True, name="GatewayErrorReconnect").start()
+            self._schedule_reconnect(f"gateway error: {error_type}")
     def on_close(self, ws, close_status_code, close_msg):
         """Enhanced connection close handling with intelligent reconnection."""
         was_active = self.connection_active
@@ -735,33 +736,18 @@ class DiscordBot:
         if self.heartbeat_thread and self.heartbeat_thread.is_alive():
             self.heartbeat_thread = None
 
-        # Only attempt reconnection if we're still supposed to be running
-        if self.running:
-            # Different backoff strategies based on close code
-            if close_status_code in [4000, 4001, 4002, 4003]:  # Authentication errors
-                print(f"\033[1;31m[GATEWAY]\033[0m Authentication error ({close_status_code}) - checking token validity")
-                # Don't reconnect immediately for auth errors
-                time.sleep(15)  # Reduced from 30
-            elif close_status_code in [4004, 4010, 4011]:  # Permanent bans/disables
-                print(f"\033[1;31m[GATEWAY]\033[0m Permanent disconnect ({close_status_code}) - account may be disabled")
-                self.running = False  # Stop trying to reconnect
-                return
-            elif close_status_code == 4007:  # Invalid sequence
-                print(f"\033[1;33m[GATEWAY]\033[0m Invalid sequence - resetting session")
-                self.session_id = None
-                self.can_resume = False
-                time.sleep(2)  # Brief pause before reconnect
-            elif close_status_code in [1000, 1001]:  # Clean disconnect
-                print(f"\033[1;36m[GATEWAY]\033[0m Clean disconnect - will reconnect immediately")
-                time.sleep(1)  # Minimal delay for clean reconnects
-            else:
-                # For other close codes, use adaptive delay based on stability
-                base_delay = 3 if self._network_stability_score > 70 else 5 if self._network_stability_score > 40 else 8
-                time.sleep(base_delay)
+        if close_status_code == 4007:
+            print(f"\033[1;33m[GATEWAY]\033[0m Invalid sequence - resetting session")
+            self.session_id = None
+            self.can_resume = False
+        elif close_status_code in [4004, 4010, 4011]:
+            print(f"\033[1;31m[GATEWAY]\033[0m Permanent disconnect ({close_status_code}) - stopping retries")
+            self.running = False
+            self._reconnect_stop.set()
+            return
 
-            # Start reconnection in background
-            reconnect_thread = threading.Thread(target=self._auto_reconnect, daemon=True, name="GatewayReconnect")
-            reconnect_thread.start()
+        if self.running:
+            self._schedule_reconnect(f"gateway closed {close_reason}")
         else:
             print(f"\033[1;36m[GATEWAY]\033[0m Bot shutdown requested - not reconnecting")
     
@@ -818,7 +804,7 @@ class DiscordBot:
                     interval = float(self.heartbeat_interval or 30.0)
                     
                     # Check for resume timeout
-                    if hasattr(self, '_resume_timeout') and self._resume_timeout and current_time > self._resume_timeout:
+                    if hasattr(self, '_resume_timeout') and self._resume_timeout and current_time > self._resume_timeout and not self.identified:
                         print(f"\033[1;33m[RESUME]\033[0m Resume timeout - falling back to identify")
                         self._resume_timeout = None
                         self.can_resume = False  # Force identify next time
@@ -833,7 +819,7 @@ class DiscordBot:
                             print(f"\033[1;31m[HEARTBEAT]\033[0m Too many missed ACKs - triggering reconnection")
                             self.connection_active = False
                             self._connection_quality_score = max(0, self._connection_quality_score - 20)
-                            threading.Thread(target=self._auto_reconnect, daemon=True).start()
+                            self._schedule_reconnect("missed heartbeat ACKs")
                             return
                     else:
                         consecutive_misses = 0  # Reset on successful ACK
@@ -910,6 +896,7 @@ class DiscordBot:
 
         return {
             "connected": self.connection_active,
+            "ready": bool(self.connection_active and self.identified),
             "identified": self.identified,
             "session_id": self.session_id[:10] + "..." if self.session_id else None,
             "can_resume": self.can_resume,
@@ -984,11 +971,7 @@ class DiscordBot:
         self._consecutive_failures += 1
         self._last_connection_attempt = time.time()
         
-        # Start reconnection with adaptive delay
-        delay = min(60 + (self._consecutive_failures * 10), 600)  # Start at 1 minute, max 10 minutes
-        print(f"\033[1;36m[RECOVERY]\033[0m ⏳ Recovery reconnect in {delay}s")
-        
-        threading.Timer(delay, self._auto_reconnect).start()
+        self._schedule_reconnect(f"health recovery: {reason}")
 
     def get_status_summary(self) -> str:
         """Get a human-readable status summary for monitoring."""
@@ -1075,15 +1058,15 @@ class DiscordBot:
         client_type = normalize_client_type(client_type)
         if client_type not in self._CLIENT_PROFILES:
             return False
+        if client_type == self._client_type:
+            return True
         self._client_type = client_type
         self._client_type_forced = True
 
         # Stop any existing VRRPC to prevent a duplicate session hanging around
         if hasattr(self, "_vrrpc") and self._vrrpc is not None:
             try:
-                self._vrrpc._desired_running = False
-                self._vrrpc._stop_requested = True
-                self._vrrpc._close_client()
+                self._vrrpc.stop()
             except Exception:
                 pass
             self._vrrpc = None
@@ -1110,67 +1093,104 @@ class DiscordBot:
             pass
         return True
 
-    def _auto_reconnect(self):
-        """Enhanced reconnect with intelligent backoff and connection quality tracking."""
+    def _schedule_reconnect(self, reason="gateway disconnected"):
+        """Request one reconnect worker, coalescing overlapping gateway callbacks."""
+        if not self.running:
+            return False
+        self._reconnect_signal.set()
+        with self._reconnect_guard:
+            if self._reconnect_thread and self._reconnect_thread.is_alive():
+                return False
+            self._reconnect_stop.clear()
+            self._reconnect_thread = threading.Thread(
+                target=self._auto_reconnect,
+                args=(reason,),
+                daemon=True,
+                name="GatewayReconnectSupervisor",
+            )
+            self._reconnect_thread.start()
+        return True
+
+    def _auto_reconnect(self, reason="gateway disconnected"):
+        """Reconnect serially and count success only after the gateway sends READY."""
         with self._connection_lock:
             if self._connecting:
-                return  # Already attempting connection
+                return
             self._connecting = True
 
         try:
-            while self.running and self._consecutive_failures < self._max_consecutive_failures:
-                current_time = time.time()
+            while self.running and not self._reconnect_stop.is_set():
+                if self.connection_active and self.identified:
+                    return
 
-                # Rate limit connection attempts with adaptive timing
-                time_since_last_attempt = current_time - self._last_connection_attempt
-                min_delay = 0.5 if self._network_stability_score > 70 else 1.0 if self._network_stability_score > 40 else 2.0
-                if time_since_last_attempt < min_delay:
-                    time.sleep(min_delay - time_since_last_attempt)
+                if self._consecutive_failures:
+                    base_delay = float(getattr(self, "_reconnect_backoff_base", 2.0))
+                    delay = min(base_delay * (2 ** min(self._consecutive_failures - 1, 6)), 120.0)
+                    if self._reconnect_stop.wait(delay):
+                        return
+                elif self._last_connection_attempt:
+                    delay = float(getattr(self, "_reconnect_initial_delay", 1.0))
+                    if self._reconnect_stop.wait(delay):
+                        return
 
+                self._reconnect_signal.clear()
                 self._last_connection_attempt = time.time()
-
                 try:
                     self._connect_gateway()
-                    # Success - reset failure counter and improve quality score
-                    self._consecutive_failures = 0
-                    self._connection_quality_score = min(100, self._connection_quality_score + 15)  # Bigger improvement
-                    self._network_stability_score = min(100, self._network_stability_score + 10)
-                    self._connection_start_time = time.time()
-                    print(f"\033[1;32m[GATEWAY]\033[0m Reconnected successfully - stability: 🟢{self._network_stability_score}%")
-                    break
-
-                except Exception as e:
+                except Exception as exc:
                     self._consecutive_failures += 1
-                    self._connection_quality_score = max(0, self._connection_quality_score - 3)  # Less penalty
                     self._network_stability_score = max(0, self._network_stability_score - 5)
+                    print(f"[RECONNECT] Connect attempt failed ({self._consecutive_failures}): {str(exc)[:120]}")
+                    continue
 
-                    # Adaptive backoff based on network stability
-                    if self._network_stability_score > 70:
-                        base_delay = min(2 ** min(self._consecutive_failures - 1, 4), 30.0)  # Faster recovery for stable networks
-                    elif self._network_stability_score > 40:
-                        base_delay = min(2 ** min(self._consecutive_failures, 5), 45.0)  # Moderate recovery
-                    else:
-                        base_delay = min(2 ** min(self._consecutive_failures, 6), 60.0)  # Slower for unstable networks
+                ready_timeout = float(getattr(self, "_reconnect_ready_timeout", 30.0))
+                deadline = time.monotonic() + ready_timeout
+                ready = False
+                while self.running and not self._reconnect_stop.is_set():
+                    if self.connection_active and self.identified:
+                        ready = True
+                        break
+                    if self._reconnect_signal.wait(0.2):
+                        self._reconnect_signal.clear()
+                        if self.connection_active and self.identified:
+                            ready = True
+                        break
+                    if time.monotonic() >= deadline:
+                        break
 
-                    jitter = base_delay * 0.15 * (0.5 - time.time() % 1)  # ±15% jitter
-                    delay = base_delay + jitter
+                if ready:
+                    self._consecutive_failures = 0
+                    self._connection_quality_score = min(100, self._connection_quality_score + 10)
+                    self._network_stability_score = min(100, self._network_stability_score + 5)
+                    self._connection_start_time = time.time()
+                    print(f"[GATEWAY] Ready after reconnect request: {reason}")
+                    return
 
-                    stability_indicator = "🔴" if self._network_stability_score < 30 else "🟡" if self._network_stability_score < 70 else "🟢"
-                    print(f"\033[1;31m[RECONNECT]\033[0m Failed (attempt {self._consecutive_failures}/{self._max_consecutive_failures}) {stability_indicator} {self._network_stability_score}% - retrying in {delay:.1f}s: {str(e)[:60]}")
-
-                    if self._consecutive_failures >= self._max_consecutive_failures:
-                        print(f"\033[1;31m[RECONNECT]\033[0m Max consecutive failures reached. Entering degraded mode with extended backoff.")
-                        self._connection_quality_score = 0
-                        # Don't break - continue with very slow retries in degraded mode
-                        time.sleep(120)  # 2 minute backoff in degraded mode
-                        self._consecutive_failures = self._max_consecutive_failures - 1  # Reset to continue trying
-                        continue
-
-                    time.sleep(delay)
-
+                self._consecutive_failures += 1
+                self._connection_quality_score = max(0, self._connection_quality_score - 5)
+                self._network_stability_score = max(0, self._network_stability_score - 5)
+                self.connection_active = False
+                self.identified = False
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._connection_quality_score = 0
+                print(
+                    f"[RECONNECT] Gateway did not reach READY; retry {self._consecutive_failures} "
+                    f"will wait before opening another session"
+                )
         finally:
             with self._connection_lock:
                 self._connecting = False
+            restart_queued = (
+                self.running
+                and not self._reconnect_stop.is_set()
+                and self._reconnect_signal.is_set()
+                and not (self.connection_active and self.identified)
+            )
+            with self._reconnect_guard:
+                if self._reconnect_thread is threading.current_thread():
+                    self._reconnect_thread = None
+            if restart_queued:
+                self._schedule_reconnect("disconnect queued during reconnect shutdown")
 
     def _connect_gateway(self):
         """Connect to Discord gateway using either async bridge or legacy websocket"""
@@ -1199,18 +1219,18 @@ class DiscordBot:
         client_type = self._client_type
 
         # Prevent multiple bridges from being started
-        if hasattr(self, '_async_gateway_bridge_active') and self._async_gateway_bridge_active:
+        if self._async_gateway_bridge_active and self.gateway_bridge and self.gateway_bridge.running:
             print("[ASYNC GATEWAY] Bridge already active, skipping duplicate start.")
             return
-        self._async_gateway_bridge_active = True
 
-        # Stop existing bridge before creating a new one to prevent double connections
-        if self.gateway_bridge and getattr(self.gateway_bridge, 'connection_active', False):
+        # Stop an old bridge before creating a replacement gateway session.
+        if self.gateway_bridge:
             try:
                 self.gateway_bridge.stop()
             except Exception:
                 pass
             self.gateway_bridge = None
+        self._async_gateway_bridge_active = True
 
         # Create gateway bridge
         self.gateway_bridge = GatewayBridge(self.token, compress=compress, client_type=client_type)
@@ -1245,9 +1265,15 @@ class DiscordBot:
             print("✅ Async gateway bridge connected successfully")
         except Exception as e:
             print(f"❌ Gateway bridge connection failed: {e}")
+            self._async_gateway_bridge_active = False
+            if self.gateway_bridge:
+                try:
+                    self.gateway_bridge.stop()
+                except Exception:
+                    pass
+                self.gateway_bridge = None
             print("Falling back to legacy gateway...")
             self.use_async_gateway = False
-            self._async_gateway_bridge_active = False
             self._connect_gateway_legacy()
 
     def _connect_gateway_legacy(self):
@@ -1324,6 +1350,8 @@ class DiscordBot:
     def _on_bridge_ready(self, data: Dict[str, Any]):
         """Handle READY event from async gateway bridge"""
         self.connection_active = True
+        self.identified = True
+        self._async_gateway_bridge_active = True
         self.session_id = data.get('session_id')
         self.resume_gateway_url = data.get('resume_gateway_url')
         self.can_resume = True
@@ -1362,6 +1390,8 @@ class DiscordBot:
         """Handle close event from async gateway bridge"""
         print(f"🔌 Async gateway bridge closed: {code} - {reason}")
         self.connection_active = False
+        self.identified = False
+        self._async_gateway_bridge_active = False
         self.on_close(None, code, reason)
 
     # Placeholder methods for additional events (can be expanded)
@@ -1455,6 +1485,10 @@ class DiscordBot:
             try:
                 if getattr(self, "db", None) and hasattr(self.db, "track_message"):
                     self.db.track_message(message_data)
+            except Exception:
+                pass
+            try:
+                self.message_logger.on_message_create(message_data, owner_id=self.user_id)
             except Exception:
                 pass
 
@@ -1694,6 +1728,8 @@ class DiscordBot:
         """Gracefully stop the bot."""
         self.running = False
         self.connection_active = False
+        self._reconnect_stop.set()
+        self._reconnect_signal.set()
 
         # Stop gateway bridge if using async gateway
         if self.use_async_gateway and self.gateway_bridge:
@@ -1716,7 +1752,7 @@ class DiscordBot:
         the gateway connection is still alive. If the connection has died, it triggers a
         reconnect so the bot wakes back up automatically.
         """
-        self._connect_gateway()
+        self._schedule_reconnect("startup")
         while self.running:
             try:
                 time.sleep(15)
@@ -1727,22 +1763,24 @@ class DiscordBot:
                     # Check async gateway bridge
                     connection_alive = (
                         self.gateway_bridge and
+                        self.gateway_bridge.running and
                         self.gateway_bridge.connection_active
                     )
                 else:
                     # Check legacy websocket thread
                     connection_alive = (
                         self.ws_thread and
-                        self.ws_thread.is_alive()
+                        self.ws_thread.is_alive() and
+                        self.connection_active and
+                        self.identified
                     )
 
-                if self.running and not connection_alive:
+                reconnecting = bool(self._reconnect_thread and self._reconnect_thread.is_alive())
+                if self.running and not connection_alive and not reconnecting:
                     print("\033[1;33m[WATCHDOG]\033[0m Gateway connection dead — reconnecting…")
                     self.identified = False
                     self.connection_active = False
-                    # Route through _auto_reconnect to avoid double connections
-                    if not self._connecting:
-                        threading.Thread(target=self._auto_reconnect, daemon=True, name="WatchdogReconnect").start()
+                    self._schedule_reconnect("watchdog detected dead connection")
             except KeyboardInterrupt:
                 self.stop()
                 break
