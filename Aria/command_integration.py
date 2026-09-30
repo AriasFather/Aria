@@ -50,7 +50,7 @@ class CommandIntegration:
                 "Messaging": ["purge", "spurge", "spam", "massdm", "dm", "mimic", "mock", "react", "typing", "snipe", "esnipe"],
                 "User": ["userinfo", "friends", "mutual", "block", "auth", "unauth", "checktoken", "token", "hypesquad", "status", "client"],
                 "Activity": ["rpc", "vrrpc", "superreact", "autoreact", "quest"],
-                "Tools": ["ms", "ping", "bold", "italic", "upper", "lower", "reverse", "flip", "echo", "length", "time", "history", "badges", "backup"],
+                "Tools": ["ping", "bold", "italic", "upper", "lower", "reverse", "flip", "echo", "length", "time", "history", "badges", "backup"],
                 "Hosting": ["host", "listhosted", "listallhosted", "clearhost", "clearallhosted", "hoston", "hostoff", "hostblacklist"],
                 "Boost": ["nitro", "giveaway", "boost"],
                 "Voice": ["vc", "vce", "vccam", "vcstream", "vcmute", "vcdeaf", "vcswitch", "vcrejoin", "vcstatus"],
@@ -303,20 +303,6 @@ class CommandIntegration:
             })
             self.api_client.send_message(ctx["channel_id"], msg_text)
         
-        @self.bot.command(name="ms", aliases=["ping", "latency"])
-        def cmd_ping(ctx, args):
-            start = time.time()
-            msg = self.api_client.send_message(ctx["channel_id"], "> Ping...")
-            latency = int((time.time() - start) * 1000)
-            
-            msg_text = fmt.status_box("Latency", {
-                "Response Time": f"{latency}ms",
-                "Status": "✓ Healthy" if latency < 200 else "⚠ Slow"
-            })
-            
-            if msg:
-                self.api_client.edit_message(ctx["channel_id"], msg.get("id"), msg_text)
-    
     def register_all(self):
         """Register all command groups"""
         self.setup_help_commands()

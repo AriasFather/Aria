@@ -26,6 +26,7 @@ import time
 import random
 import json
 from urllib.parse import quote as _url_quote
+from rpc_profiles import RPCProfileStore
 
 BOT_START_TIME = time.time()
 
@@ -888,6 +889,7 @@ LAST_SERVER_COPY = None
 RPC_KEEPALIVE_LOCK = threading.Lock()
 RPC_KEEPALIVE = {
     "running": False,
+    "generation": 0,
     "thread": None,
     "mode": "",
     "interval": 120,
@@ -897,6 +899,9 @@ RPC_KEEPALIVE = {
 }
 
 _RUNTIME_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_state.json")
+RPC_PROFILE_STORE = RPCProfileStore(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rpc_profiles.json"))
+RPC_ROTATION_LOCK = threading.RLock()
+RPC_ROTATION = {"running": False, "thread": None, "stop_event": None}
 
 
 def _load_runtime_state():
@@ -933,13 +938,13 @@ def _save_auto_delete_state(bot):
     _save_runtime_state(state)
 
 
-def _save_rpc_state(bot):
+def _save_rpc_state(bot, mode=None):
     if not isinstance(getattr(bot, "activity", None), dict):
         return False
     state = _load_runtime_state()
     state["rpc"] = {
         "activity": bot.activity,
-        "mode": str(RPC_KEEPALIVE.get("mode") or "custom"),
+        "mode": str(mode or RPC_KEEPALIVE.get("mode") or "custom"),
         "saved_at": int(time.time()),
     }
     _save_runtime_state(state)
@@ -991,7 +996,10 @@ def _restore_runtime_state(bot):
             if isinstance(bot.activity, dict):
                 bot.set_activity(bot.activity)
 
-        configure_rpc_keepalive(bot, str(rpc_state.get("mode") or "saved"), _refresh_saved_rpc)
+        saved_mode = str(rpc_state.get("mode") or "saved")
+        configure_rpc_keepalive(bot, saved_mode, _refresh_saved_rpc)
+        if saved_mode == "rotation":
+            start_rpc_rotation(bot)
 
 
 def configure_rpc_keepalive(bot, mode, refresh_fn=None, interval=120):
@@ -1002,12 +1010,17 @@ def configure_rpc_keepalive(bot, mode, refresh_fn=None, interval=120):
         RPC_KEEPALIVE["refresh_fn"] = refresh_fn
         if RPC_KEEPALIVE["running"]:
             return True, "RPC keepalive updated"
+        RPC_KEEPALIVE["generation"] += 1
+        generation = RPC_KEEPALIVE["generation"]
         RPC_KEEPALIVE["running"] = True
         RPC_KEEPALIVE["last_refresh"] = int(time.time())
         RPC_KEEPALIVE["last_error"] = ""
 
     def _worker():
-        while RPC_KEEPALIVE["running"] and bot.running:
+        while bot.running:
+            with RPC_KEEPALIVE_LOCK:
+                if not RPC_KEEPALIVE["running"] or RPC_KEEPALIVE["generation"] != generation:
+                    break
             try:
                 fn = RPC_KEEPALIVE.get("refresh_fn")
                 if callable(fn):
@@ -1021,8 +1034,11 @@ def configure_rpc_keepalive(bot, mode, refresh_fn=None, interval=120):
 
             wait_for = int(RPC_KEEPALIVE.get("interval", 120))
             for _ in range(wait_for):
-                if not RPC_KEEPALIVE["running"] or not bot.running:
+                if not bot.running:
                     break
+                with RPC_KEEPALIVE_LOCK:
+                    if not RPC_KEEPALIVE["running"] or RPC_KEEPALIVE["generation"] != generation:
+                        return
                 time.sleep(1)
 
     thread = threading.Thread(target=_worker, daemon=True, name="rpc-keepalive")
@@ -1034,6 +1050,7 @@ def configure_rpc_keepalive(bot, mode, refresh_fn=None, interval=120):
 def stop_rpc_keepalive(bot=None, clear_activity=False):
     with RPC_KEEPALIVE_LOCK:
         was_running = RPC_KEEPALIVE["running"]
+        RPC_KEEPALIVE["generation"] += 1
         RPC_KEEPALIVE["running"] = False
         RPC_KEEPALIVE["mode"] = ""
         RPC_KEEPALIVE["refresh_fn"] = None
@@ -1043,6 +1060,86 @@ def stop_rpc_keepalive(bot=None, clear_activity=False):
         except Exception:
             pass
     return (True, "RPC keepalive stopped") if was_running else (False, "RPC keepalive is not running")
+
+
+def stop_rpc_rotation(bot=None, resume_keepalive=False):
+    with RPC_ROTATION_LOCK:
+        stop_event = RPC_ROTATION.get("stop_event")
+        was_running = bool(RPC_ROTATION.get("running"))
+        RPC_ROTATION["running"] = False
+        RPC_ROTATION["stop_event"] = None
+        RPC_ROTATION["thread"] = None
+    if stop_event:
+        stop_event.set()
+    if was_running and resume_keepalive and bot is not None and isinstance(getattr(bot, "activity", None), dict):
+        configure_rpc_keepalive(bot, "saved")
+        _save_rpc_state(bot, mode="saved")
+    return was_running
+
+
+def start_rpc_rotation(bot):
+    rotation = RPC_PROFILE_STORE.get_rotation()
+    if not rotation:
+        return False, "Set a rotation with at least two saved presets first"
+
+    stop_rpc_rotation()
+    stop_rpc_keepalive(bot)
+    stop_event = threading.Event()
+    interval = rotation["interval"]
+    preset_names = list(rotation["presets"])
+
+    def _worker():
+        index = 0
+        try:
+            while bot.running and not stop_event.is_set():
+                preset_name = preset_names[index % len(preset_names)]
+                activity = RPC_PROFILE_STORE.get_preset(preset_name)
+                if not activity:
+                    break
+                bot.set_activity(activity)
+                _save_rpc_state(bot, mode="rotation")
+                index += 1
+                if stop_event.wait(interval):
+                    break
+        except Exception as exc:
+            print(f"[RPC] Rotation stopped after error: {exc}")
+        finally:
+            resume_saved_activity = False
+            with RPC_ROTATION_LOCK:
+                if RPC_ROTATION.get("stop_event") is stop_event:
+                    RPC_ROTATION["running"] = False
+                    RPC_ROTATION["stop_event"] = None
+                    RPC_ROTATION["thread"] = None
+                    resume_saved_activity = bot.running and not stop_event.is_set()
+            if resume_saved_activity and isinstance(getattr(bot, "activity", None), dict):
+                configure_rpc_keepalive(bot, "saved")
+                _save_rpc_state(bot, mode="saved")
+
+    thread = threading.Thread(target=_worker, daemon=True, name="rpc-rotation")
+    with RPC_ROTATION_LOCK:
+        RPC_ROTATION.update({"running": True, "thread": thread, "stop_event": stop_event})
+    thread.start()
+    return True, f"Rotation started: {len(preset_names)} presets, every {interval}s"
+
+
+def apply_rpc_activity(bot, activity, mode="dashboard"):
+    stop_rpc_rotation()
+    stop_rpc_keepalive(bot)
+    bot.set_activity(activity)
+    if isinstance(getattr(bot, "activity", None), dict):
+        _save_rpc_state(bot, mode=mode)
+        configure_rpc_keepalive(bot, mode)
+    else:
+        _clear_rpc_state()
+    return True, getattr(bot, "activity", None)
+
+
+def apply_rpc_preset(bot, preset_name):
+    activity = RPC_PROFILE_STORE.get_preset(preset_name)
+    if not activity:
+        return False, f"RPC preset '{preset_name}' was not found"
+    apply_rpc_activity(bot, activity, mode=f"preset:{preset_name}")
+    return True, activity
 
 
 # ---------------------------------------------------------------------------
@@ -1383,6 +1480,12 @@ def main():
 
 
     bot = DiscordBot(token, config.get("prefix") or "$", config)
+    bot._rpc_stop_rotation = stop_rpc_rotation
+    bot._rpc_start_rotation = start_rpc_rotation
+    bot._rpc_apply_preset = apply_rpc_preset
+    bot._rpc_apply_activity = apply_rpc_activity
+    bot._rpc_rotation_state = RPC_ROTATION
+    bot._save_client_type = _save_client_state
     bot.db = MessageDatabase(os.path.join(os.path.dirname(__file__), "messages.db"))
     bot._auto_delete_enabled = True
     bot._auto_delete_delay = 3.0
@@ -2123,6 +2226,60 @@ def main():
                 fmt.nitro_status(status, stats["claimed"], stats["cached"], stats.get("last_claimed")),
             )
 
+    @bot.command(name="logger", aliases=["msglog"])
+    def logger_cmd(ctx, args):
+        message_logger = ctx["bot"].message_logger
+        subcommand = str(args[0]).lower() if args else "status"
+        response = ""
+        try:
+            if subcommand in {"on", "enable"}:
+                message_logger.update_config({"enabled": True})
+                response = "> Message logger enabled."
+            elif subcommand in {"off", "disable"}:
+                message_logger.update_config({"enabled": False})
+                response = "> Message logger disabled."
+            elif subcommand in {"add", "keyword"} and len(args) > 1:
+                word = " ".join(args[1:]).strip()
+                config = message_logger.state()["config"]
+                keywords = config["keywords"]
+                if word.casefold() not in {item.casefold() for item in keywords}:
+                    keywords.append(word)
+                message_logger.update_config({"keywords": keywords})
+                response = f"> Logger keyword added: **{word[:80]}**"
+            elif subcommand in {"remove", "rm"} and len(args) > 1:
+                word = " ".join(args[1:]).strip()
+                keywords = [item for item in message_logger.state()["config"]["keywords"] if item.casefold() != word.casefold()]
+                message_logger.update_config({"keywords": keywords})
+                response = f"> Logger keyword removed: **{word[:80]}**"
+            elif subcommand in {"keywords", "list"}:
+                keywords = message_logger.state()["config"]["keywords"]
+                response = "> Logger keywords: " + (", ".join(keywords) if keywords else "none")
+            elif subcommand in {"mentions", "edits", "deletes"} and len(args) > 1:
+                value = str(args[1]).lower() in {"on", "true", "1", "yes"}
+                message_logger.update_config({subcommand: value})
+                response = f"> Logger {subcommand}: {'on' if value else 'off'}."
+            elif subcommand == "scope" and len(args) > 1:
+                mode = str(args[1]).lower()
+                scope_id = args[2] if len(args) > 2 else ""
+                message_logger.update_config({"scope": {"mode": mode, "id": scope_id}})
+                response = f"> Logger scope set to **{mode}**."
+            else:
+                config = message_logger.state()["config"]
+                scope = config["scope"]
+                scope_name = scope["mode"] + (f" ({scope['id']})" if scope["id"] else "")
+                response = (
+                    f"> Logger **{'ON' if config['enabled'] else 'OFF'}** · scope: **{scope_name}** · "
+                    f"keywords: **{len(config['keywords'])}** · mentions/edits/deletes: "
+                    f"**{'/'.join('on' if config[key] else 'off' for key in ('mentions', 'edits', 'deletes'))}**\n"
+                    f"> Commands: `{bot.prefix}logger on|off`, `add|remove <word>`, `keywords`, "
+                    f"`scope all|dms|guilds|guild <id>|channel <id>`, `mentions|edits|deletes on|off`"
+                )
+        except ValueError as exc:
+            response = f"> **Logger** :: {exc}"
+        except Exception as exc:
+            response = f"> **Logger** :: Operation failed: {str(exc)[:120]}"
+        ctx["api"].send_message(ctx["channel_id"], response)
+
     @bot.command(name="nitroinvites", aliases=["nitro_invites", "ni"])
     def nitro_invites_cmd(ctx, args):
         invites_path = os.path.join(os.path.dirname(__file__), "invites.txt")
@@ -2272,8 +2429,8 @@ def main():
                     else:
                         msg = ctx["api"].send_message(ctx["channel_id"], "> **Anti-GC Trap** :: Whitelist is empty.")
         
-    @bot.command(name="ms", aliases=["ping", "latency", "lat"])
-    def ms(ctx, args):
+    @bot.command(name="ping", aliases=["ms", "latency", "lat"])
+    def ping_cmd(ctx, args):
         import formatter as fmt
         api = ctx["api"]
         metrics = api.get_latency_metrics() if hasattr(api, "get_latency_metrics") else {}
@@ -2804,6 +2961,7 @@ def main():
             ctype = "mobile"
         ok = ctx["bot"].set_client_type(ctype)
         if ok:
+            _save_client_state(ctx["bot"])
             msg = ctx["api"].send_message(ctx["channel_id"], f"> **✓ Client** :: Switched to **{labels[ctype]}** — reconnecting...")
         else:
             msg = ctx["api"].send_message(ctx["channel_id"], "> **✗ Client** :: Failed to switch client type")
@@ -2821,6 +2979,7 @@ def main():
         if action in {"off", "disable", "disconnect", "stop"}:
             ok = ctx["bot"].set_client_type("mobile")
             if ok:
+                _save_client_state(ctx["bot"])
                 msg = ctx["api"].send_message(
                     ctx["channel_id"],
                     "> **✓ VR** :: Disconnected VR client mode and switched to **mobile** — reconnecting...",
@@ -2832,6 +2991,7 @@ def main():
         if action in {"on", "enable", "connect", "start"}:
             ok = ctx["bot"].set_client_type("vr")
             if ok:
+                _save_client_state(ctx["bot"])
                 msg = ctx["api"].send_message(
                     ctx["channel_id"],
                     "> **✓ VR** :: Enabled **VR (Meta Quest 3)** client mode — reconnecting...",
@@ -3971,6 +4131,8 @@ Example Usage:
                 (f"{p}rpc playing", 'name=<name> [details=<text>] [state=<text>] [image_url=<url>]'),
                 (f"{p}rpc timer", 'name=<name> details=<text> state=<text> start=<unix> end=<unix> [image_url=<url>]'),
                 (f"{p}rpc crunchyroll", 'name=<show> episode_title=<ep> elapsed_minutes=<n> total_minutes=<n> [image_url=<url>]'),
+                (f"{p}rpc preset", "save/load/list/delete <name>"),
+                (f"{p}rpc rotation", "set <seconds> <preset,...> | start | stop | status | clear"),
                 (f"{p}rpc stop", "Clear all activities"),
             ]
             help_text = fmt.sections("RPC Commands", fmt.command_list(cmds))
@@ -3980,13 +4142,98 @@ Example Usage:
         parts = args[0].lower()
         parts = REAL_RPC_ALIASES.get(parts, parts)
         remaining = " ".join(args[1:]) if len(args) > 1 else ""
+
+        if parts == "preset":
+            subcommand = args[1].lower() if len(args) > 1 else ""
+            preset_name = args[2] if len(args) > 2 else ""
+            profile_bot = ctx["bot"]
+
+            try:
+                if subcommand == "save":
+                    activity = getattr(profile_bot, "activity", None)
+                    if not isinstance(activity, dict):
+                        raise ValueError("Set an RPC activity before saving a preset")
+                    RPC_PROFILE_STORE.save_preset(preset_name, activity)
+                    response = f"> RPC preset **{preset_name}** saved."
+                elif subcommand == "load":
+                    loaded, activity = apply_rpc_preset(profile_bot, preset_name)
+                    if not loaded:
+                        raise ValueError(activity)
+                    response = f"> RPC preset **{preset_name}** loaded."
+                elif subcommand == "list":
+                    preset_names = sorted(RPC_PROFILE_STORE.list_presets(), key=str.casefold)
+                    response = "> Saved RPC presets: " + (", ".join(preset_names) if preset_names else "none")
+                elif subcommand == "delete":
+                    if not RPC_PROFILE_STORE.delete_preset(preset_name):
+                        raise ValueError(f"RPC preset **{preset_name}** was not found")
+                    response = f"> RPC preset **{preset_name}** deleted."
+                else:
+                    response = f"> Usage: `{bot.prefix}rpc preset save|load|delete <name>` or `{bot.prefix}rpc preset list`"
+            except ValueError as exc:
+                response = f"> **RPC preset** :: {exc}"
+            except Exception as exc:
+                response = f"> **RPC preset** :: Operation failed: {str(exc)[:120]}"
+
+            ctx["api"].send_message(ctx["channel_id"], response)
+            return
+
+        if parts == "rotation":
+            subcommand = args[1].lower() if len(args) > 1 else "status"
+            profile_bot = ctx["bot"]
+
+            try:
+                if subcommand == "set":
+                    if len(args) < 4:
+                        raise ValueError(f"Usage: `{bot.prefix}rpc rotation set <seconds> <preset,...>`")
+                    preset_names = [
+                        name.strip()
+                        for token in args[3:]
+                        for name in token.split(",")
+                        if name.strip()
+                    ]
+                    rotation = RPC_PROFILE_STORE.set_rotation(preset_names, args[2])
+                    response = f"> RPC rotation set: {', '.join(rotation['presets'])} every {rotation['interval']}s."
+                elif subcommand == "start":
+                    started, response = start_rpc_rotation(profile_bot)
+                    if not started:
+                        raise ValueError(response)
+                elif subcommand == "stop":
+                    stopped = stop_rpc_rotation()
+                    if stopped and isinstance(getattr(profile_bot, "activity", None), dict):
+                        configure_rpc_keepalive(profile_bot, "saved")
+                        _save_rpc_state(profile_bot, mode="saved")
+                    response = "> RPC rotation stopped." if stopped else "> RPC rotation is not running."
+                elif subcommand == "clear":
+                    stop_rpc_rotation(profile_bot, resume_keepalive=True)
+                    RPC_PROFILE_STORE.clear_rotation()
+                    response = "> RPC rotation configuration cleared."
+                elif subcommand == "status":
+                    rotation = RPC_PROFILE_STORE.get_rotation()
+                    is_running = bool(RPC_ROTATION.get("running"))
+                    if not rotation:
+                        response = "> No RPC rotation configured."
+                    else:
+                        state_label = "running" if is_running else "stopped"
+                        response = f"> RPC rotation **{state_label}**: {', '.join(rotation['presets'])} every {rotation['interval']}s."
+                else:
+                    response = f"> Usage: `{bot.prefix}rpc rotation set|start|stop|status|clear`"
+            except ValueError as exc:
+                response = f"> **RPC rotation** :: {exc}"
+            except Exception as exc:
+                response = f"> **RPC rotation** :: Operation failed: {str(exc)[:120]}"
+
+            ctx["api"].send_message(ctx["channel_id"], response)
+            return
         
         if parts == "stop":
+            stop_rpc_rotation()
             stop_rpc_keepalive(bot=bot, clear_activity=True)
             _clear_rpc_state()
             print(f"[RPC] stopped by user={ctx['author_id']}")
             msg = ctx["api"].send_message(ctx["channel_id"], "> **Cleared** all **activities**.")
             return
+
+        stop_rpc_rotation()
         
         if not remaining:
             msg = ctx["api"].send_message(ctx["channel_id"], "> **Missing** arguments.")
@@ -6947,7 +7194,7 @@ Example Usage:
             "utility": {
                 "title": f"{p}help Utility",
                 "lines": [
-                    ("ms", "Test bot latency"),
+                    ("ping", "Test bot latency"),
                     ("purge <amount|all> [-e] [-r] [-s] [channel_id]", "Advanced message purge"),
                     ("spurge", "Stop active purge"),
                     ("guilds", "Count guilds"),
@@ -6967,12 +7214,12 @@ Example Usage:
                 ],
             },
 
-            "ms": help_page(
-                f"{p}ms",
+            "ping": help_page(
+                f"{p}ping",
                 "Tests bot latency by measuring round-trip message time.",
                 "",
                 {"type": "section", "text": "Aliases"},
-                "ping",
+                "ms, latency, lat",
             ),
 
                         "purge": help_page(
@@ -8482,7 +8729,7 @@ Example Usage:
             "all": {
                 "title": "All Commands",
                 "lines": [
-                    ("ms", "Test latency"),
+                    ("ping", "Test latency"),
                     ("spam <count> <text>", "Spam"),
                     ("purge <amount|all> [-e] [-r] [-s] [channel_id]", "Delete messages"),
                     ("spurge", "Stop active purge"),
@@ -8807,7 +9054,7 @@ Example Usage:
             "Messaging": ["purge", "spurge", "spam", "massdm", "dm", "mimic", "mock", "react", "typing", "snipe", "esnipe"],
             "User": ["userinfo", "friends", "mutual", "block", "auth", "unauth", "checktoken", "token", "hypesquad", "status", "client"],
             "Activity": ["rpc", "vrrpc", "superreact", "autoreact", "quest"],
-            "Tools": ["ms", "ping", "bold", "italic", "upper", "lower", "reverse", "flip", "echo", "length", "time", "history", "badges", "backup"],
+            "Tools": ["ping", "bold", "italic", "upper", "lower", "reverse", "flip", "echo", "length", "time", "history", "badges", "backup"],
             "Hosting": ["host", "listhosted", "listallhosted", "clearhost", "clearallhosted", "hoston", "hostoff", "hostblacklist"],
             "Boost": ["nitro", "giveaway", "boost"],
             "Voice": ["vc", "vce", "vccam", "vcstream", "vcmute", "vcdeaf", "vcswitch", "vcrejoin", "vcstatus"],

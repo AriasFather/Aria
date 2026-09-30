@@ -22,6 +22,8 @@ from flask import Flask, jsonify, redirect, send_from_directory, request, sessio
 from werkzeug.serving import make_server, WSGIRequestHandler
 from mongo_store import get_mongo_store
 from api_client import DiscordAPIClient
+from panel_security import load_panel_secret_key
+from rpc_profiles import RPCProfileStore
 
 _DEFAULT_RPC_APPLICATION_ID = "1494507808329171096"
 _RPC_APP_ID_HINTS: list[tuple[set[str], str]] = [
@@ -114,10 +116,10 @@ class WebPanel:
         self._webui_static = os.path.join(base_dir, "web_ui", "static")
         self._base_dir = base_dir
         self._store = get_mongo_store()
+        self._rpc_profile_store = RPCProfileStore(os.path.join(base_dir, "rpc_profiles.json"))
 
         self.app = Flask(__name__, static_folder=self._webui_static, static_url_path="/static")
-        _secret_seed = f"aria-{instance_id}-{self.owner_id}"
-        self.app.secret_key = os.getenv("ARIA_WEBPANEL_SECRET", hashlib.sha256(_secret_seed.encode()).hexdigest())
+        self.app.secret_key = load_panel_secret_key(base_dir)
 
         # --- Normalize owner entry in dashboard_users.json on startup ---
         self._normalize_owner_entry()
@@ -943,6 +945,11 @@ class WebPanel:
                         "prefix": str(saved.get("prefix") or "$"),
                         "status": "online" if connected else "offline",
                         "connected": connected,
+                        "identified": connected,
+                        "gateway_latency_ms": active_info.get("gateway_latency_ms"),
+                        "reconnect_attempts": int(active_info.get("consecutive_failures", 0) or 0),
+                        "connection_quality": active_info.get("connection_quality"),
+                        "network_stability": active_info.get("network_stability"),
                         "command_count": 0,
                         "commands_registered": 0,
                         "client_type": str(active_info.get("client_type") or saved.get("client_type") or "hosted"),
@@ -988,6 +995,13 @@ class WebPanel:
         hours, rem = divmod(uptime_secs, 3600)
         mins, secs = divmod(rem, 60)
         uptime_str = f"{hours}h {mins}m {secs}s"
+        diagnostics = {}
+        try:
+            get_diagnostics = getattr(b, "get_connection_diagnostics", None)
+            diagnostics = get_diagnostics() if callable(get_diagnostics) else {}
+        except Exception:
+            diagnostics = {}
+        is_ready = bool(getattr(b, "connection_active", False) and getattr(b, "identified", False))
 
         return {
             "username": username,
@@ -995,7 +1009,12 @@ class WebPanel:
             "avatar_url": avatar_url,
             "prefix": getattr(b, "prefix", None) or "$",
             "status": getattr(b, "_current_status", "online"),
-            "connected": getattr(b, "connection_active", False),
+            "connected": is_ready,
+            "identified": bool(getattr(b, "identified", False)),
+            "gateway_latency_ms": diagnostics.get("gateway_latency_ms", getattr(b, "gateway_latency_ms", None)),
+            "reconnect_attempts": int(diagnostics.get("consecutive_failures", getattr(b, "_consecutive_failures", 0)) or 0),
+            "connection_quality": diagnostics.get("connection_quality", getattr(b, "_connection_quality_score", None)),
+            "network_stability": diagnostics.get("network_stability", getattr(b, "_network_stability_score", None)),
             "command_count": getattr(b, "command_count", 0),
             "commands_registered": len(getattr(b, "commands", {})),
             "client_type": getattr(b, "_client_type", "mobile"),
@@ -1189,7 +1208,8 @@ class WebPanel:
         # Source 1: live bot command registry.
         cmds = getattr(b, "commands", {}) or {}
         for name, cmd in cmds.items():
-            _upsert(str(name), list(getattr(cmd, "aliases", []) or []), str(getattr(cmd, "description", "") or ""))
+            canonical_name = str(getattr(cmd, "name", "") or name)
+            _upsert(canonical_name, list(getattr(cmd, "aliases", []) or []), str(getattr(cmd, "description", "") or ""))
 
         # Source 2: integrated command engine on live bot.
         if not registry and b is not None:
@@ -2160,10 +2180,14 @@ class WebPanel:
 
         @self.app.get("/api/config")
         def api_config_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             return jsonify({"ok": True, "data": self._config_data()})
 
         @self.app.post("/api/config")
         def api_config_set() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             data = request.get_json(force=True) or {}
             b = self.bot
             if b is None:
@@ -2194,6 +2218,8 @@ class WebPanel:
         # ── RPC ───────────────────────────────────────────────────────────
         @self.app.get("/api/rpc")
         def api_rpc_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             b = self.bot
             activity = getattr(b, "activity", None) if b else None
             runtime_rpc: dict = {}
@@ -2217,6 +2243,8 @@ class WebPanel:
 
         @self.app.post("/api/rpc")
         def api_rpc_set() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             data = request.get_json(force=True) or {}
             b = self.bot
             if b is None:
@@ -2224,7 +2252,11 @@ class WebPanel:
             action = data.get("action", "set")
             if action == "stop":
                 try:
-                    b.set_activity(None)
+                    apply_activity = getattr(b, "_rpc_apply_activity", None)
+                    if callable(apply_activity):
+                        apply_activity(b, None)
+                    else:
+                        b.set_activity(None)
                 except Exception as e:
                     return jsonify({"ok": False, "error": str(e)}), 500
                 return jsonify({"ok": True, "action": "stopped"})
@@ -2285,14 +2317,158 @@ class WebPanel:
                         assets["small_image"] = self._normalize_rpc_asset_key(si, app_id)
                     activity["assets"] = assets
                 
-                b.set_activity(activity)
+                apply_activity = getattr(b, "_rpc_apply_activity", None)
+                if callable(apply_activity):
+                    apply_activity(b, activity)
+                else:
+                    b.set_activity(activity)
             except Exception as e:
                 return jsonify({"ok": False, "error": str(e)}), 500
             return jsonify({"ok": True, "action": "set", "activity": activity})
 
+        @self.app.get("/api/rpc/profiles")
+        def api_rpc_profiles_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            runtime_rpc = {}
+            try:
+                with open(os.path.join(self._base_dir, "runtime_state.json"), "r", encoding="utf-8") as state_file:
+                    runtime_rpc = json.load(state_file).get("rpc", {})
+            except Exception:
+                pass
+            rotation_state = getattr(self.bot, "_rpc_rotation_state", {}) if self.bot else {}
+            rotation_running = bool(rotation_state.get("running")) if isinstance(rotation_state, dict) else False
+            return jsonify({
+                "ok": True,
+                "presets": sorted(self._rpc_profile_store.list_presets(), key=str.casefold),
+                "rotation": self._rpc_profile_store.get_rotation(),
+                "rotation_running": rotation_running,
+            })
+
+        @self.app.post("/api/rpc/profiles/preset")
+        def api_rpc_preset_action() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
+            action = str(data.get("action") or "").strip().lower()
+            name = str(data.get("name") or "").strip()
+            b = self.bot
+            try:
+                if action == "save":
+                    activity = getattr(b, "activity", None) if b else None
+                    self._rpc_profile_store.save_preset(name, activity)
+                elif action == "load":
+                    apply_preset = getattr(b, "_rpc_apply_preset", None) if b else None
+                    if not callable(apply_preset):
+                        return jsonify({"ok": False, "error": "RPC profile controls are unavailable"}), 503
+                    loaded, result = apply_preset(b, name)
+                    if not loaded:
+                        return jsonify({"ok": False, "error": result}), 404
+                elif action == "delete":
+                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                    if callable(stop_rotation):
+                        stop_rotation(b, resume_keepalive=True)
+                    if not self._rpc_profile_store.delete_preset(name):
+                        return jsonify({"ok": False, "error": "RPC preset was not found"}), 404
+                else:
+                    return jsonify({"ok": False, "error": "Action must be save, load, or delete"}), 400
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+            return jsonify({"ok": True, "action": action, "presets": sorted(self._rpc_profile_store.list_presets(), key=str.casefold)})
+
+        @self.app.post("/api/rpc/profiles/rotation")
+        def api_rpc_rotation_action() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
+            action = str(data.get("action") or "").strip().lower()
+            b = self.bot
+            try:
+                if action == "set":
+                    rotation = self._rpc_profile_store.set_rotation(data.get("presets"), data.get("interval"))
+                elif action == "start":
+                    start_rotation = getattr(b, "_rpc_start_rotation", None) if b else None
+                    if not callable(start_rotation):
+                        return jsonify({"ok": False, "error": "RPC rotation controls are unavailable"}), 503
+                    started, result = start_rotation(b)
+                    if not started:
+                        return jsonify({"ok": False, "error": result}), 400
+                    rotation = self._rpc_profile_store.get_rotation()
+                elif action == "stop":
+                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                    stopped = bool(stop_rotation(b, resume_keepalive=True)) if callable(stop_rotation) else False
+                    rotation = self._rpc_profile_store.get_rotation()
+                elif action == "clear":
+                    stop_rotation = getattr(b, "_rpc_stop_rotation", None) if b else None
+                    if callable(stop_rotation):
+                        stop_rotation(b, resume_keepalive=True)
+                    self._rpc_profile_store.clear_rotation()
+                    rotation = None
+                else:
+                    return jsonify({"ok": False, "error": "Action must be set, start, stop, or clear"}), 400
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+            return jsonify({"ok": True, "action": action, "rotation": rotation})
+
+        @self.app.get("/api/message-logger")
+        def api_message_logger_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            logger = getattr(self.bot, "message_logger", None) if self.bot else None
+            if logger is None:
+                return jsonify({"ok": False, "error": "Message logger is unavailable"}), 503
+            return jsonify({"ok": True, **logger.state()})
+
+        @self.app.post("/api/message-logger")
+        def api_message_logger_update() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
+            logger = getattr(self.bot, "message_logger", None) if self.bot else None
+            if logger is None:
+                return jsonify({"ok": False, "error": "Message logger is unavailable"}), 503
+            action = str(data.get("action") or "config").strip().lower()
+            try:
+                if action == "config":
+                    state = logger.update_config(data.get("config"))
+                elif action == "keyword_add":
+                    word = str(data.get("keyword") or "").strip()
+                    if not word:
+                        return jsonify({"ok": False, "error": "Keyword cannot be empty"}), 400
+                    config = logger.state()["config"]
+                    config["keywords"].append(word)
+                    state = logger.update_config({"keywords": config["keywords"]})
+                elif action == "keyword_remove":
+                    word = str(data.get("keyword") or "").strip().casefold()
+                    config = logger.state()["config"]
+                    config["keywords"] = [item for item in config["keywords"] if item.casefold() != word]
+                    state = logger.update_config({"keywords": config["keywords"]})
+                elif action == "clear":
+                    logger.clear_feed()
+                    state = logger.state()
+                else:
+                    return jsonify({"ok": False, "error": "Unknown message logger action"}), 400
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+            return jsonify({"ok": True, **state})
+
         # ── Presence Status ───────────────────────────────────────────────
         @self.app.get("/api/presence")
         def api_presence_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             b = self.bot
             return jsonify({
                 "ok": True,
@@ -2301,6 +2477,8 @@ class WebPanel:
 
         @self.app.get("/api/client")
         def api_client_get() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             b = self.bot
             if b is None:
                 return jsonify({"ok": False, "error": "No bot instance"}), 400
@@ -2319,6 +2497,8 @@ class WebPanel:
 
         @self.app.post("/api/client")
         def api_client_set() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             b = self.bot
             if b is None:
                 return jsonify({"ok": False, "error": "No bot instance"}), 400
@@ -2332,10 +2512,15 @@ class WebPanel:
                 return jsonify({"ok": False, "error": str(e)}), 500
             if not ok:
                 return jsonify({"ok": False, "error": "Invalid client type"}), 400
+            save_client_type = getattr(b, "_save_client_type", None)
+            if callable(save_client_type):
+                save_client_type(b)
             return jsonify({"ok": True, "client_type": getattr(b, "_client_type", client_type)})
 
         @self.app.post("/api/presence")
         def api_presence_set() -> Any:
+            if not self._require_session():
+                return jsonify({"ok": False, "error": "Unauthorized"}), 403
             data = request.get_json(force=True) or {}
             b = self.bot
             if b is None:

@@ -5,6 +5,8 @@ import time
 import threading
 import zlib
 from typing import Optional, Dict, Any, Callable
+from core.client.platform import build_identify_payload
+from discord_api_types import DEFAULT_GATEWAY_INTENTS
 
 class AsyncDiscordGateway:
     """Async Discord Gateway client with zlib-stream compression support"""
@@ -67,12 +69,28 @@ class AsyncDiscordGateway:
                             pass
                 finally:
                     heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
                     self.connected = False
+                    self.identified = False
+                    self.ws = None
 
         except Exception as e:
             print(f"❌ Gateway connection error: {e}")
             if self.on_error:
                 self.on_error(e)
+
+    async def close(self):
+        """Close the active websocket so the owning bridge can be restarted."""
+        self.connected = False
+        websocket = self.ws
+        if websocket is not None:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     async def _handle_compressed_message(self, message: bytes):
         """Handle zlib-stream compressed messages"""
@@ -175,68 +193,20 @@ class AsyncDiscordGateway:
         # Add more event handlers as needed
 
     async def _identify(self):
-        """Send stealthy identify payload with capabilities and client state"""
+        """Identify using the same supported client profile as the legacy gateway."""
         if self.identified:
-            print("⚠️ Already identified, skipping")
+            print("Already identified, skipping duplicate IDENTIFY")
             return
 
-        # Stealth identify payload mimicking Chrome desktop client
-        identify_payload = {
-            "op": 2,  # Identify
-            "d": {
-                "token": self.token,
-                "capabilities": 16381,  # Modern client capabilities
-                "properties": {
-                    "os": "Windows",
-                    "browser": "Chrome",
-                    "device": "",
-                    "system_locale": "en-US",
-                    "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "browser_version": "120.0.0.0",
-                    "os_version": "10",
-                    "referrer": "",
-                    "referring_domain": "",
-                    "referrer_current": "",
-                    "referring_domain_current": "",
-                    "release_channel": "stable",
-                    "client_build_number": 250000,  # Latest build number
-                    "client_event_source": None
-                },
-                "presence": {
-                    "status": "online",
-                    "since": 0,
-                    "activities": [],
-                    "afk": False
-                },
-                "compress": False,  # Let zlib-stream handle compression
-                "client_state": {
-                    "guild_versions": {},
-                    "highest_last_message_id": "0",
-                    "read_state_version": 0,
-                    "user_guild_settings_version": -1,
-                    "user_settings_version": -1,
-                    "private_channels_version": "0",
-                    "api_code_version": 0
-                }
-            }
-        }
-
-        # Adjust properties based on client type
-        if self.client_type == "mobile":
-            identify_payload["d"]["properties"].update({
-                "os": "Android",
-                "browser": "Discord Android",
-                "device": "phone",
-                "browser_user_agent": "Discord/250000 CFNetwork/1404.0.5 Darwin/22.3.0",
-                "browser_version": "250000",
-                "os_version": "11"
-            })
-        elif self.client_type == "web":
-            # Keep desktop Chrome properties
-            pass
-
+        identify_payload = build_identify_payload(
+            token=self.token,
+            client_type=self.client_type,
+            status="online",
+            intents=DEFAULT_GATEWAY_INTENTS,
+            compress=False,
+        )
         await self.ws.send(json.dumps(identify_payload))
-        print("🔐 Sent stealth identify payload")
+        print(f"Sent gateway IDENTIFY for client profile '{self.client_type}'")
 
     async def _heartbeat_loop(self):
         """Maintain heartbeat to keep connection alive"""

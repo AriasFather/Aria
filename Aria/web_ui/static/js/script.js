@@ -398,6 +398,11 @@ async function loadOverview() {
     countUp('commandCount', d.command_count, 900);
     countUp('commandsRegistered', d.commands_registered, 800);
     setText('connectionStatus', d.connected ? 'Online' : 'Offline');
+    const gatewayParts = [];
+    if (d.gateway_latency_ms != null) gatewayParts.push(`${Math.round(Number(d.gateway_latency_ms))} ms`);
+    gatewayParts.push(`${Number(d.reconnect_attempts || 0)} retries`);
+    if (d.connection_quality != null) gatewayParts.push(`quality ${Math.round(Number(d.connection_quality))}%`);
+    setText('gatewayDiagnostics', d.identified ? gatewayParts.join(' · ') : 'Waiting for gateway READY');
     setText('botStatus', d.status || 'online');
     setText('clientType', d.client_type || 'mobile');
     updateLiveOverviewMetrics(d);
@@ -1183,6 +1188,7 @@ function loadSection(name) {
     if (name === 'commands')  loadCommands();
     if (name === 'analytics') loadAnalytics();
     if (name === 'history')   loadHistory();
+    if (name === 'logger')    loadMessageLogger();
     if (name === 'boost')     loadBoost();
     if (name === 'rpc')       loadRpc();
     if (name === 'presence')  loadPresence();
@@ -1653,6 +1659,7 @@ function restoreRpcDraft() {
 }
 
 async function loadRpc() {
+    loadRpcProfiles();
     const res = await fetchJSON('/api/rpc');
     if (!res) return;
     const active = res.active || false;
@@ -1943,9 +1950,8 @@ async function applyRpc() {
         }
     }
 
-    // Always send real app id, but allow spoofed display name
-    const activity = { type, name, application_id: appId };
-    if (display_name) activity.display_name = display_name;
+    // Keep the previewed activity name identical to the payload sent to Discord.
+    const activity = { type, name: display_name || name, application_id: appId };
     if (details) activity.details = details;
     if (state) activity.state = state;
     if (type === 1 && streamUrl) activity.url = streamUrl;
@@ -1993,6 +1999,110 @@ async function clearRpc() {
     } else {
         showRpcMsg('Failed to stop RPC.', false);
     }
+}
+
+function showRpcProfileMsg(message, state = '') {
+    const el = document.getElementById('rpcProfileMsg');
+    if (!el) return;
+    el.textContent = message;
+    el.className = `rpc-profile-feedback${state ? ` ${state}` : ''}`;
+}
+
+let _rpcRotationOrder = [];
+document.getElementById('rpcRotationPresets')?.addEventListener('change', event => {
+    const select = event.currentTarget;
+    const selected = new Set(Array.from(select.selectedOptions, option => option.value));
+    _rpcRotationOrder = _rpcRotationOrder.filter(name => selected.has(name));
+    for (const option of select.options) {
+        if (option.selected && !_rpcRotationOrder.includes(option.value)) _rpcRotationOrder.push(option.value);
+    }
+});
+
+async function loadRpcProfiles() {
+    const data = await fetchJSON('/api/rpc/profiles');
+    if (!data || !data.ok) return;
+
+    const presets = Array.isArray(data.presets) ? data.presets : [];
+    const rotationNames = data.rotation?.presets || [];
+    const presetSelect = document.getElementById('rpcPresetSelect');
+    const rotationSelect = document.getElementById('rpcRotationPresets');
+    const intervalInput = document.getElementById('rpcRotationInterval');
+    const selectedPreset = presetSelect?.value || '';
+
+    for (const select of [presetSelect, rotationSelect]) {
+        if (!select) continue;
+        select.replaceChildren();
+        if (!presets.length && select === presetSelect) {
+            select.add(new Option('No presets saved', ''));
+        }
+        for (const name of presets) {
+            const option = new Option(name, name);
+            if (select === rotationSelect) option.selected = rotationNames.includes(name);
+            select.add(option);
+        }
+    }
+    _rpcRotationOrder = rotationNames.filter(name => presets.includes(name));
+    if (presetSelect && presets.includes(selectedPreset)) presetSelect.value = selectedPreset;
+    if (intervalInput && data.rotation?.interval) intervalInput.value = data.rotation.interval;
+    if (data.rotation_running) {
+        showRpcProfileMsg(`Rotation active · ${rotationNames.join(' → ')} · ${data.rotation.interval}s`, 'success');
+    } else if (data.rotation) {
+        showRpcProfileMsg(`Rotation ready · ${rotationNames.join(' → ')} · ${data.rotation.interval}s`);
+    } else {
+        showRpcProfileMsg(presets.length ? `${presets.length} preset${presets.length === 1 ? '' : 's'} saved` : 'Save an activity to create your first preset.');
+    }
+}
+
+async function saveRpcPreset() {
+    const name = (document.getElementById('rpcPresetName')?.value || '').trim();
+    if (!name) { showRpcProfileMsg('Enter a preset name first.', 'error'); return; }
+    const res = await postJSON('/api/rpc/profiles/preset', { action: 'save', name });
+    if (!res?.ok) { showRpcProfileMsg(res?.error || 'Preset could not be saved.', 'error'); return; }
+    document.getElementById('rpcPresetName').value = '';
+    showRpcProfileMsg(`Saved “${name}”.`, 'success');
+    await loadRpcProfiles();
+}
+
+async function loadRpcPreset() {
+    const name = document.getElementById('rpcPresetSelect')?.value || '';
+    if (!name) { showRpcProfileMsg('Choose a saved preset first.', 'error'); return; }
+    const res = await postJSON('/api/rpc/profiles/preset', { action: 'load', name });
+    if (!res?.ok) { showRpcProfileMsg(res?.error || 'Preset could not be loaded.', 'error'); return; }
+    showRpcProfileMsg(`Loaded “${name}”.`, 'success');
+    loadRpc();
+}
+
+async function deleteRpcPreset() {
+    const name = document.getElementById('rpcPresetSelect')?.value || '';
+    if (!name) { showRpcProfileMsg('Choose a saved preset first.', 'error'); return; }
+    if (!window.confirm(`Delete the RPC preset “${name}”?`)) return;
+    const res = await postJSON('/api/rpc/profiles/preset', { action: 'delete', name });
+    if (!res?.ok) { showRpcProfileMsg(res?.error || 'Preset could not be deleted.', 'error'); return; }
+    showRpcProfileMsg(`Deleted “${name}”.`, 'success');
+    await loadRpcProfiles();
+}
+
+async function setRpcRotation() {
+    const select = document.getElementById('rpcRotationPresets');
+    const selected = new Set(Array.from(select?.selectedOptions || [], option => option.value));
+    const presets = _rpcRotationOrder.filter(name => selected.has(name));
+    for (const option of select?.options || []) {
+        if (option.selected && !presets.includes(option.value)) presets.push(option.value);
+    }
+    const interval = Number.parseInt(document.getElementById('rpcRotationInterval')?.value, 10);
+    if (presets.length < 2) { showRpcProfileMsg('Select at least two presets in rotation order.', 'error'); return; }
+    const res = await postJSON('/api/rpc/profiles/rotation', { action: 'set', presets, interval });
+    if (!res?.ok) { showRpcProfileMsg(res?.error || 'Rotation could not be saved.', 'error'); return; }
+    showRpcProfileMsg(`Rotation saved · ${presets.join(' → ')} · ${interval}s`, 'success');
+    await loadRpcProfiles();
+}
+
+async function controlRpcRotation(action) {
+    const res = await postJSON('/api/rpc/profiles/rotation', { action });
+    if (!res?.ok) { showRpcProfileMsg(res?.error || `Rotation ${action} failed.`, 'error'); return; }
+    const messages = { start: 'Rotation started.', stop: 'Rotation stopped.', clear: 'Rotation configuration cleared.' };
+    showRpcProfileMsg(messages[action] || 'Rotation updated.', 'success');
+    await loadRpcProfiles();
 }
 
 // ── Presence ───────────────────────────────────────────────────────────────────
@@ -2870,3 +2980,166 @@ document.addEventListener('DOMContentLoaded', () => {
 setInterval(() => {
     refreshNotificationCenter();
 }, 7000);
+
+function renderMessageLoggerState(data) {
+    const config = data.config || {};
+    const toggles = {
+        loggerEnabled: 'enabled',
+        loggerMentions: 'mentions',
+        loggerEdits: 'edits',
+        loggerDeletes: 'deletes',
+        loggerIgnoreSelf: 'ignore_self',
+    };
+    for (const [id, key] of Object.entries(toggles)) {
+        const input = document.getElementById(id);
+        if (input) input.checked = Boolean(config[key]);
+    }
+
+    const badge = document.getElementById('loggerStateBadge');
+    if (badge) {
+        badge.textContent = config.enabled ? 'Enabled' : 'Disabled';
+        badge.className = `badge ${config.enabled ? 'badge-ok' : 'badge-off'}`;
+    }
+    const scopeMode = document.getElementById('loggerScopeMode');
+    const scopeId = document.getElementById('loggerScopeId');
+    if (scopeMode) scopeMode.value = config.scope?.mode || 'all';
+    if (scopeId) {
+        scopeId.value = config.scope?.id || '';
+        scopeId.hidden = !['guild', 'channel'].includes(scopeMode?.value);
+    }
+
+    const keywordList = document.getElementById('loggerKeywordList');
+    if (keywordList) {
+        keywordList.replaceChildren();
+        for (const keyword of config.keywords || []) {
+            const chip = document.createElement('span');
+            chip.className = 'logger-keyword-chip';
+            const label = document.createElement('span');
+            label.textContent = keyword;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.textContent = '×';
+            remove.setAttribute('aria-label', `Remove keyword ${keyword}`);
+            remove.addEventListener('click', () => removeLoggerKeyword(keyword));
+            chip.append(label, remove);
+            keywordList.appendChild(chip);
+        }
+    }
+
+    const feed = Array.isArray(data.feed) ? data.feed : [];
+    const feedBody = document.getElementById('loggerFeedBody');
+    const count = document.getElementById('loggerFeedCount');
+    if (count) count.textContent = `${feed.length} event${feed.length === 1 ? '' : 's'}`;
+    if (!feedBody) return;
+    feedBody.replaceChildren();
+    if (!feed.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.className = 'empty-row';
+        cell.colSpan = 5;
+        cell.textContent = config.enabled ? 'No matching events yet.' : 'Logger is disabled.';
+        row.appendChild(cell);
+        feedBody.appendChild(row);
+        return;
+    }
+
+    const labels = { mention: 'Mention', keyword: 'Keyword', edit: 'Edited', delete: 'Deleted' };
+    for (const item of feed) {
+        const row = document.createElement('tr');
+        const values = [
+            labels[item.kind] || item.kind || 'Event',
+            item.author || 'Unknown',
+            item.content || (item.kind === 'edit' ? item.after : '') || '(no text)',
+            item.guild_id ? `Server ${item.guild_id} · Channel ${item.channel_id}` : `DM · ${item.channel_id}`,
+            item.ts ? new Date(Number(item.ts) * 1000).toLocaleString() : '—',
+        ];
+        for (const value of values) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+        }
+        if (item.before) row.title = `Before edit: ${item.before}`;
+        feedBody.appendChild(row);
+    }
+}
+
+async function loadMessageLogger() {
+    const data = await fetchJSON('/api/message-logger');
+    if (data?.ok) renderMessageLoggerState(data);
+}
+
+async function saveMessageLoggerConfig(config) {
+    const data = await postJSON('/api/message-logger', { action: 'config', config });
+    if (!data?.ok) {
+        showToast('Logger', data?.error || 'Settings could not be saved.', 'err');
+        return;
+    }
+    renderMessageLoggerState(data);
+}
+
+async function addLoggerKeyword() {
+    const input = document.getElementById('loggerKeywordInput');
+    const keyword = (input?.value || '').trim();
+    if (!keyword) return;
+    const data = await postJSON('/api/message-logger', { action: 'keyword_add', keyword });
+    if (!data?.ok) {
+        showToast('Logger', data?.error || 'Keyword could not be added.', 'err');
+        return;
+    }
+    input.value = '';
+    renderMessageLoggerState(data);
+}
+
+async function removeLoggerKeyword(keyword) {
+    const data = await postJSON('/api/message-logger', { action: 'keyword_remove', keyword });
+    if (data?.ok) renderMessageLoggerState(data);
+    else showToast('Logger', data?.error || 'Keyword could not be removed.', 'err');
+}
+
+async function clearMessageLoggerFeed() {
+    if (!window.confirm('Clear the current message logger feed?')) return;
+    const data = await postJSON('/api/message-logger', { action: 'clear' });
+    if (data?.ok) renderMessageLoggerState(data);
+    else showToast('Logger', data?.error || 'Feed could not be cleared.', 'err');
+}
+
+async function refreshMessageLogger() {
+    await loadMessageLogger();
+}
+
+setInterval(() => {
+    if (document.querySelector('.nav-item.active')?.dataset.section === 'logger') {
+        loadMessageLogger();
+    }
+}, 5000);
+
+document.addEventListener('DOMContentLoaded', () => {
+    const toggleMap = {
+        loggerEnabled: 'enabled',
+        loggerMentions: 'mentions',
+        loggerEdits: 'edits',
+        loggerDeletes: 'deletes',
+        loggerIgnoreSelf: 'ignore_self',
+    };
+    for (const [id, key] of Object.entries(toggleMap)) {
+        document.getElementById(id)?.addEventListener('change', event => {
+            saveMessageLoggerConfig({ [key]: event.currentTarget.checked });
+        });
+    }
+
+    const scopeMode = document.getElementById('loggerScopeMode');
+    const scopeId = document.getElementById('loggerScopeId');
+    const saveScope = () => {
+        const mode = scopeMode?.value || 'all';
+        if (scopeId) scopeId.hidden = !['guild', 'channel'].includes(mode);
+        saveMessageLoggerConfig({ scope: { mode, id: scopeId?.value || '' } });
+    };
+    scopeMode?.addEventListener('change', saveScope);
+    scopeId?.addEventListener('change', saveScope);
+    document.getElementById('loggerKeywordInput')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            addLoggerKeyword();
+        }
+    });
+});

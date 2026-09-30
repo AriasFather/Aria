@@ -99,22 +99,32 @@ class GatewayBridge:
         # Wait for connection
         timeout = 30
         start_time = time.time()
-        while not self.connection_active and (time.time() - start_time) < timeout:
+        while self.running and not self.connection_active and (time.time() - start_time) < timeout:
             time.sleep(0.1)
 
         if not self.connection_active:
+            self.stop()
             raise Exception("Gateway bridge failed to connect within 30 seconds")
 
     def stop(self):
         """Stop the gateway bridge"""
-        if not self.running:
-            return
-
         self.running = False
         self._shutdown_event.set()
+        loop = self._loop
+        if loop and loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(self.gateway.close(), loop)
+                future.result(timeout=3)
+            except Exception:
+                pass
 
-        if self.thread and self.thread.is_alive():
+        if self.thread and self.thread.is_alive() and self.thread is not threading.current_thread():
             self.thread.join(timeout=5)
+        self.connection_active = False
+
+    def close(self):
+        """Keep the WebSocketApp-compatible close entrypoint used by DiscordBot."""
+        self.stop()
 
     def _run_async_loop(self):
         """Run the async gateway in a separate thread"""
@@ -129,6 +139,12 @@ class GatewayBridge:
                     self._sync_callbacks['on_error'](e)
                 except Exception:
                     pass
+        finally:
+            self.running = False
+            self.connection_active = False
+            if self._loop and not self._loop.is_closed():
+                self._loop.close()
+            self._loop = None
 
     async def _async_main(self):
         """Main async gateway loop"""
