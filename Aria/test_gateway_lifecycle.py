@@ -5,12 +5,14 @@ import unittest
 import asyncio
 import json
 from unittest.mock import patch
+from unittest.mock import Mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from bot import DiscordBot
 from async_gateway import AsyncDiscordGateway
-from core.client.platform import CLIENT_PROFILES
+from core.client.platform import CLIENT_PROFILES, build_identify_payload
+from voice import SimpleVoice, VoiceClient
 
 
 def make_bot():
@@ -130,6 +132,32 @@ class GatewayLifecycleTests(unittest.TestCase):
         self.assertEqual(payload["d"]["properties"], CLIENT_PROFILES["vr"])
         self.assertEqual(payload["d"]["token"], "test-token")
 
+    def test_identify_payload_preserves_multiple_activities(self):
+        activities = [{"type": 0, "name": "Game"}, {"type": 3, "name": "Show"}]
+        payload = build_identify_payload("test-token", "web", activity=activities)
+        self.assertEqual(payload["d"]["presence"]["activities"], activities)
+
+    def test_set_activities_sends_multiple_activities_and_keeps_legacy_primary(self):
+        bot = object.__new__(DiscordBot)
+        class Socket:
+            def __init__(self):
+                self.payload = None
+            def send(self, payload):
+                self.payload = json.loads(payload)
+
+        bot.ws = Socket()
+        bot.identified = True
+        bot.connection_active = True
+        bot._current_status = "online"
+        bot._last_activity_signature = None
+
+        activities = [{"type": 0, "name": "Game"}, {"type": 3, "name": "Show"}]
+        bot.set_activities(activities)
+
+        self.assertEqual(bot.activity["name"], "Game")
+        self.assertEqual([item["name"] for item in bot.activities], ["Game", "Show"])
+        self.assertEqual(bot.ws.payload["d"]["activities"], bot.activities)
+
     def test_async_bridge_routes_dispatch_through_one_bot_callback(self):
         bot = make_bot()
         bot.config = {"gateway_compress": False}
@@ -172,6 +200,85 @@ class GatewayLifecycleTests(unittest.TestCase):
         bot = object.__new__(DiscordBot)
         bot._client_type = "vr"
         self.assertTrue(bot.set_client_type("vr"))
+
+    def test_voice_client_accepts_state_updates_without_user_id_for_current_channel(self):
+        client = VoiceClient(bot_ws=Mock(), user_id="12345")
+        client.guild_id = "guild-1"
+        client.channel_id = "channel-1"
+
+        client.on_voice_state_update({
+            "channel_id": "channel-1",
+            "guild_id": "guild-1",
+            "session_id": "session-xyz",
+        })
+
+        self.assertEqual(client.session_id, "session-xyz")
+        self.assertTrue(client._session_event.is_set())
+
+    def test_voice_client_ignores_other_users_state_updates_in_same_guild(self):
+        client = VoiceClient(bot_ws=Mock(), user_id="12345")
+        client.guild_id = "guild-1"
+        client.channel_id = "channel-1"
+
+        client.on_voice_state_update({
+            "user_id": "another-user",
+            "channel_id": "channel-1",
+            "guild_id": "guild-1",
+            "session_id": "wrong-session",
+        })
+
+        self.assertIsNone(client.session_id)
+        self.assertFalse(client._session_event.is_set())
+
+    def test_voice_client_accepts_server_updates_for_current_channel_when_guild_id_absent(self):
+        client = VoiceClient(bot_ws=Mock(), user_id="12345")
+        client.guild_id = None
+        client.channel_id = "channel-1"
+
+        client.on_voice_server_update({
+            "channel_id": "channel-1",
+            "endpoint": "voice.discord.gg:443",
+            "token": "token-123",
+        })
+
+        self.assertEqual(client.endpoint, "voice.discord.gg")
+        self.assertEqual(client.voice_token, "token-123")
+        self.assertTrue(client._server_event.is_set())
+
+    def test_partial_voice_join_remains_leaveable_after_handshake_failure(self):
+        class PartialClient:
+            def __init__(self, bot_ws, user_id):
+                self.gateway_joined = False
+                self._ws_error = ""
+                self.disconnect_calls = 0
+
+            def connect(self, channel_id, guild_id, is_dm):
+                self.gateway_joined = True
+                self._ws_error = "Timeout waiting for VOICE_SERVER_UPDATE"
+                return False
+
+            def disconnect(self):
+                self.disconnect_calls += 1
+                self.gateway_joined = False
+
+        api = Mock()
+        api.request.return_value.status_code = 200
+        api.request.return_value.json.return_value = {"type": 2, "guild_id": "456"}
+        bot = Mock()
+        bot.ws = Mock()
+        bot.user_id = "789"
+        bot._voice_client = None
+        manager = SimpleVoice(api, "token", bot)
+
+        with patch("voice.VoiceClient", PartialClient):
+            self.assertFalse(manager.join_vc("123"))
+            self.assertTrue(manager.is_in_voice())
+            client = manager.active_connections["channel_123"]
+
+            self.assertTrue(manager.leave_vc())
+
+        self.assertEqual(client.disconnect_calls, 1)
+        self.assertIsNone(bot._voice_client)
 
 
 if __name__ == "__main__":

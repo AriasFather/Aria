@@ -1298,7 +1298,7 @@ function loadSection(name) {
     if (name === 'history')   loadHistory();
     if (name === 'logger')    loadMessageLogger();
     if (name === 'boost')     loadBoost();
-    if (name === 'rpc')       loadRpc();
+    if (name === 'rpc')       { loadRpc(); loadSpotifyLyrics(); }
     if (name === 'presence')  loadPresence();
     if (name === 'hosted')    loadHosted();
     if (name === 'logs')      loadLogs();
@@ -2113,15 +2113,15 @@ async function applyRpc() {
     if (!name) { showRpcMsg('Name is required.', false); return; }
 
     if (type === 1) {
-        const twitchOk = /^https?:\/\/(www\.)?twitch\.tv\/[A-Za-z0-9_]+/i.test(streamUrl);
+        const twitchOk = /^https?:\/\/(www\.)?twitch\.(?:tv|com)\/[A-Za-z0-9_]+/i.test(streamUrl);
         if (!twitchOk) {
             showRpcMsg('Streaming type requires a valid Twitch URL.', false);
             return;
         }
     }
 
-    // Keep the previewed activity name identical to the payload sent to Discord.
-    const activity = { type, name: display_name || name, application_id: appId };
+    const activity = { type, name, application_id: appId };
+    if (display_name) activity.display_name = display_name;
     if (details) activity.details = details;
     if (state) activity.state = state;
     if (type === 1 && streamUrl) activity.url = streamUrl;
@@ -2169,6 +2169,37 @@ async function clearRpc() {
     } else {
         showRpcMsg('Failed to stop RPC.', false);
     }
+}
+
+async function loadSpotifyLyrics() {
+    const res = await fetchJSON('/api/spotify-lyrics');
+    if (!res || !res.ok) return;
+    const enabled = Boolean(res.enabled || res.running);
+    const badge = document.getElementById('spotifyLyricsBadge');
+    if (badge) {
+        badge.textContent = enabled ? (res.phase === 'syncing' ? 'Syncing' : 'On') : 'Off';
+        badge.className = 'badge ' + (enabled ? 'badge-ok' : 'badge-off');
+    }
+    const track = [res.title, res.artist].filter(Boolean).join(' - ');
+    setText('spotifyLyricsTrack', track || (res.available === false ? 'Unavailable for this client' : 'No active track'));
+    setText('spotifyLyricsLine', res.current_line || res.error || (res.available === false
+        ? 'Spotify lyrics controls are unavailable'
+        : 'Waiting for Spotify playback'));
+}
+
+async function setSpotifyLyrics(action) {
+    const res = await postJSON('/api/spotify-lyrics', { action });
+    const message = document.getElementById('spotifyLyricsMsg');
+    if (message) {
+        message.textContent = res && res.ok
+            ? (action === 'start' ? 'Spotify lyrics sync started.' : 'Spotify lyrics sync stopping.')
+            : ((res && res.error) || 'Spotify lyrics action failed.');
+        message.className = `rpc-profile-feedback ${res && res.ok ? 'success' : 'error'}`;
+    }
+    if (res && res.ok) {
+        trackDashboardAction('spotify_lyrics', `${action === 'start' ? 'Started' : 'Stopped'} Spotify lyrics sync`);
+    }
+    await loadSpotifyLyrics();
 }
 
 function showRpcProfileMsg(message, state = '') {
@@ -2992,6 +3023,11 @@ setInterval(() => {
     const active = document.querySelector('.nav-item.active');
     if (active && active.dataset.section === 'overview') loadOverview();
 }, 7000);
+
+setInterval(() => {
+    const active = document.querySelector('.nav-item.active');
+    if (active && active.dataset.section === 'rpc') loadSpotifyLyrics();
+}, 5000);
 
 // ── Initial load ──────────────────────────────────────────────────────────────
 async function bootDashboard() {

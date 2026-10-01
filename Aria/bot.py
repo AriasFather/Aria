@@ -79,6 +79,7 @@ class DiscordBot:
         self.resume_gateway_url: Optional[str] = None
         self.can_resume: bool = False
         self.activity = None
+        self.activities = []
         self.activity_persist = True
         self._last_activity_signature = None
         self.connection_active = False
@@ -176,8 +177,10 @@ class DiscordBot:
                 if not value:
                     continue
                 if key in {"large_image", "small_image"}:
-                    if value.startswith("mp:mp:"):
+                    had_media_proxy_prefix = False
+                    while value.startswith("mp:"):
                         value = value[3:]
+                        had_media_proxy_prefix = True
                     if value.startswith("attachments/"):
                         value = f"mp:{value}"
                     if value.startswith(("https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments/")):
@@ -185,6 +188,8 @@ class DiscordBot:
                         if match:
                             channel_id, attachment_id, filename = match.groups()
                             value = f"mp:attachments/{channel_id}/{attachment_id}/{filename}"
+                    elif had_media_proxy_prefix and not value.startswith("mp:"):
+                        value = f"mp:{value}"
                 cleaned_assets[key] = value
             if cleaned_assets:
                 normalized["assets"] = cleaned_assets
@@ -1032,7 +1037,7 @@ class DiscordBot:
                 token=self.token,
                 client_type=self._client_type,
                 status=getattr(self, "_current_status", "online"),
-                activity=self.activity,
+                activity=getattr(self, "activities", None) or self.activity,
                 intents=DEFAULT_GATEWAY_INTENTS,
                 compress=False,
             )
@@ -1459,6 +1464,15 @@ class DiscordBot:
             except Exception:
                 pass
 
+            friends_tools = getattr(self, "friends_tools", None)
+            if friends_tools and str(author_id or "") in friends_tools.autoreply:
+                threading.Thread(
+                    target=friends_tools.on_message_create,
+                    args=(message_data, str(self.user_id or "")),
+                    daemon=True,
+                    name="AriaAutoReply",
+                ).start()
+
             # AFK auto-clear when the owner sends any message
             if author_id == self.user_id:
                 afk_ref = getattr(self, "_afk_system_ref", None)
@@ -1628,7 +1642,7 @@ class DiscordBot:
                     "op": GatewayOpcodes.PresenceUpdate,
                     "d": {
                         "since": since,
-                        "activities": [self.activity] if self.activity else [],
+                        "activities": list(getattr(self, "activities", []) or ([self.activity] if self.activity else [])),
                         "status": status,
                         "afk": status == "idle",
                     },
@@ -1641,32 +1655,49 @@ class DiscordBot:
 
     def set_activity(self, activity):
         """Set or clear the current presence activity."""
-        activity = self._normalize_activity_payload(activity)
-        self.activity = activity
-        signature = None
-        if isinstance(activity, dict):
-            signature = (
+        if isinstance(activity, (list, tuple)):
+            return self.set_activities(activity)
+        return self.set_activities([activity] if isinstance(activity, dict) else [])
+
+    def set_activities(self, activities):
+        """Set multiple rich-presence activities in one gateway presence update."""
+        if not isinstance(activities, (list, tuple)):
+            raise TypeError("activities must be a list or tuple")
+        normalized_activities = [
+            self._normalize_activity_payload(activity)
+            for activity in activities
+            if isinstance(activity, dict)
+        ]
+        if len(normalized_activities) > 5:
+            raise ValueError("Discord presence supports at most five activities")
+        self.activities = normalized_activities
+        self.activity = normalized_activities[0] if normalized_activities else None
+        signature = tuple(
+            (
                 activity.get("type"),
                 activity.get("name"),
                 activity.get("details"),
                 activity.get("state"),
                 activity.get("application_id"),
             )
+            for activity in normalized_activities
+        ) or None
         if signature != self._last_activity_signature:
-            if isinstance(activity, dict):
-                activity_type = {
-                    ActivityType.Playing: "playing",
-                    ActivityType.Streaming: "streaming",
-                    ActivityType.Listening: "listening",
-                    ActivityType.Watching: "watching",
-                    ActivityType.Competing: "competing",
-                }.get(activity.get("type"), str(activity.get("type")))
-                print(
-                    f"\033[1;36m[RPC]\033[0m type={activity_type} "
-                    f"name={activity.get('name') or ''} "
-                    f"details={activity.get('details') or ''} "
-                    f"state={activity.get('state') or ''}"
-                )
+            if normalized_activities:
+                for activity in normalized_activities:
+                    activity_type = {
+                        ActivityType.Playing: "playing",
+                        ActivityType.Streaming: "streaming",
+                        ActivityType.Listening: "listening",
+                        ActivityType.Watching: "watching",
+                        ActivityType.Competing: "competing",
+                    }.get(activity.get("type"), str(activity.get("type")))
+                    print(
+                        f"\033[1;36m[RPC]\033[0m type={activity_type} "
+                        f"name={activity.get('name') or ''} "
+                        f"details={activity.get('details') or ''} "
+                        f"state={activity.get('state') or ''}"
+                    )
             else:
                 print("\033[1;36m[RPC]\033[0m cleared")
             self._last_activity_signature = signature
@@ -1678,7 +1709,7 @@ class DiscordBot:
                     "op": GatewayOpcodes.PresenceUpdate,
                     "d": {
                         "since": since,
-                        "activities": [activity] if activity else [],
+                        "activities": normalized_activities,
                         "status": status,
                         "afk": status == "idle",
                     },
@@ -1686,6 +1717,7 @@ class DiscordBot:
                 self.ws.send(json.dumps(payload))
             except Exception:
                 pass
+        return normalized_activities
 
     def clear_activity(self):
         """Remove the current presence activity."""
@@ -1697,6 +1729,18 @@ class DiscordBot:
         self.connection_active = False
         self._reconnect_stop.set()
         self._reconnect_signal.set()
+
+        for manager_name, stop_method in (
+            ("guild_tools", "stop_rotation"),
+            ("super_react_client", "stop"),
+        ):
+            manager = getattr(self, manager_name, None)
+            stop = getattr(manager, stop_method, None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception as e:
+                    print(f"Error stopping {manager_name}: {e}")
 
         # Stop the active transport through one shutdown path.
         if self.use_async_gateway and self.gateway_bridge:

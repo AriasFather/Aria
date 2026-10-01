@@ -17,6 +17,7 @@ import traceback
 import time
 import importlib
 import json
+import random
 from discord.user import ClientUser
 from discord_api_types import GatewayIntentBits, GatewayOpcodes
 
@@ -37,6 +38,285 @@ class _RawAuthorizationToken:
 discord_logger = logging.getLogger('discord')
 discord_logger.setLevel(logging.WARNING)
 discord_logger.addHandler(logging.NullHandler())
+
+_PLATFORM_PROPS: dict[str, dict] = {
+    "desktop": {
+        "os": "Windows",
+        "browser": "Discord Client",
+        "device": "",
+        "system_locale": "en-US",
+        "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "browser_version": "124.0.0.0",
+        "os_version": "10",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "web": {
+        "os": "Windows",
+        "browser": "Discord Web",
+        "device": "",
+        "system_locale": "en-US",
+        "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "browser_version": "124.0.0.0",
+        "os_version": "10",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "phone": {
+        "os": "iOS",
+        "browser": "Discord iOS",
+        "device": "iPhone16,2",
+        "system_locale": "en-US",
+        "browser_user_agent": "Discord/268.0 CFNetwork/1474 Darwin/23.0.0",
+        "browser_version": "268.0",
+        "os_version": "17.4.1",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "android": {
+        "os": "Android",
+        "browser": "Discord Android",
+        "device": "Pixel 8",
+        "system_locale": "en-US",
+        "browser_user_agent": "Discord-Android/214116;ROM:13;Device:Pixel 8",
+        "browser_version": "214.116",
+        "os_version": "13",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "xbox": {
+        "os": "Console",
+        "browser": "Discord Embedded",
+        "device": "Xbox Series X",
+        "system_locale": "en-US",
+        "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; Xbox; Xbox Series X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2486.0 Safari/537.36 Edge/13.10586",
+        "browser_version": "",
+        "os_version": "",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "console": {
+        "os": "Console",
+        "browser": "Discord Embedded",
+        "device": "PlayStation 5",
+        "system_locale": "en-US",
+        "browser_user_agent": "Mozilla/5.0 (PlayStation 5 3.11) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "browser_version": "",
+        "os_version": "",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "vr": {
+        "os": "Console",
+        "browser": "Discord VR",
+        "device": "VR-Headset",
+        "system_locale": "en-US",
+        "browser_user_agent": "DiscordVR/12.45",
+        "browser_version": "23.7.91",
+        "os_version": "10.0.45",
+        "referrer": "",
+        "referring_domain": "",
+    },
+    "off": {
+        "os": "Windows",
+        "browser": "Chrome",
+        "device": "",
+        "system_locale": "en-US",
+        "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "browser_version": "124.0.0.0",
+        "os_version": "10",
+        "referrer": "",
+        "referring_domain": "",
+    },
+}
+
+_ACTIVE_PLATFORM = {"key": "off"}
+
+
+def set_active_platform(key: str) -> None:
+    _ACTIVE_PLATFORM["key"] = key if key in _PLATFORM_PROPS else "off"
+
+
+def get_active_platform() -> str:
+    return _ACTIVE_PLATFORM["key"]
+
+
+def install_platform_patch() -> None:
+    if not DISCORD_AVAILABLE:
+        return
+
+    if getattr(DiscordWebSocket, "_platform_patched", False):
+        return
+
+    original_identify = DiscordWebSocket.identify
+
+    async def identify_platform_spoofer(self):
+        key = _ACTIVE_PLATFORM.get("key", "off")
+        props = _PLATFORM_PROPS.get(key)
+
+        if not props or key == "off":
+            await original_identify(self)
+            return
+
+        payload = {
+            "op": GatewayOpcodes.Identify,
+            "d": {
+                "token": getattr(self, "token", None) or getattr(self, "_token", None),
+                "capabilities": 16381,
+                "properties": {
+                    "os": props["os"],
+                    "browser": props["browser"],
+                    "device": props["device"],
+                    "system_locale": props.get("system_locale", "en-US"),
+                    "browser_user_agent": props.get("browser_user_agent", ""),
+                    "browser_version": props.get("browser_version", ""),
+                    "os_version": props.get("os_version", ""),
+                    "referrer": props.get("referrer", ""),
+                    "referring_domain": props.get("referring_domain", ""),
+                    "release_channel": "stable",
+                    "client_build_number": 32765,
+                    "client_event_source": None,
+                },
+                "compress": True,
+                "large_threshold": 250,
+                "intents": int(
+                    GatewayIntentBits.Guilds
+                    | GatewayIntentBits.GuildMembers
+                    | GatewayIntentBits.GuildPresences
+                    | GatewayIntentBits.GuildMessages
+                ),
+            },
+        }
+
+        await self.send_as_json(payload)
+
+    DiscordWebSocket.identify = identify_platform_spoofer
+    DiscordWebSocket._platform_patched = True
+
+
+class _PlatformGateway:
+    """Lightweight extra gateway connection that only IDENTIFYs with a specific platform."""
+
+    _GATEWAY = "wss://gateway.discord.gg/?encoding=json&v=9&compress=zlib-stream"
+    _ZLIB_SUFFIX = b"\x00\x00\xff\xff"
+
+    def __init__(self, token: str, props: dict):
+        self._token = token
+        self._props = props
+        self._ws = None
+        self._hb_task = None
+        self._running = False
+        self._buf = bytearray()
+        self._inflator = __import__("zlib").decompressobj()
+
+    async def start(self):
+        if not DISCORD_AVAILABLE:
+            return
+        import websockets
+        self._running = True
+        while self._running:
+            self._buf = bytearray()
+            self._inflator = __import__("zlib").decompressobj()
+            try:
+                self._ws = await websockets.connect(self._GATEWAY, max_size=2**26)
+                while True:
+                    try:
+                        raw = await self._ws.recv()
+                    except Exception:
+                        break
+                    should_break = await self._handle(raw)
+                    if should_break:
+                        break
+            except Exception:
+                pass
+            finally:
+                if self._hb_task and not self._hb_task.done():
+                    self._hb_task.cancel()
+                if self._ws:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+            if self._running:
+                await asyncio.sleep(5)
+
+    async def _handle(self, raw) -> bool:
+        if isinstance(raw, bytes):
+            self._buf.extend(raw)
+            if len(raw) < 4 or raw[-4:] != self._ZLIB_SUFFIX:
+                return False
+            try:
+                raw = self._inflator.decompress(self._buf).decode()
+                self._buf = bytearray()
+            except Exception:
+                self._buf = bytearray()
+                self._inflator = __import__("zlib").decompressobj()
+                return False
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return False
+        op = payload.get("op")
+        if op == 10:
+            interval = payload["d"]["heartbeat_interval"]
+            if self._hb_task and not self._hb_task.done():
+                self._hb_task.cancel()
+            self._hb_task = asyncio.ensure_future(self._heartbeat(interval))
+            await self._identify()
+        elif op == 1:
+            await self._send({"op": 1, "d": None})
+        elif op == 7:
+            return True
+        elif op == 9:
+            await asyncio.sleep(random.uniform(1, 5))
+            await self._identify()
+        return False
+
+    async def _heartbeat(self, interval: float):
+        await asyncio.sleep(interval / 1000 * random.random())
+        while self._running and self._ws:
+            try:
+                await self._send({"op": 1, "d": None})
+                await asyncio.sleep(interval / 1000)
+            except Exception:
+                break
+
+    async def _identify(self):
+        await self._send({
+            "op": 2,
+            "d": {
+                "token": self._token,
+                "capabilities": 1767421,
+                "properties": self._props,
+                "compress": False,
+                "presence": {"status": "online", "since": 0, "activities": [], "afk": False},
+                "client_state": {
+                    "guild_versions": {}, "highest_last_message_id": "0",
+                    "read_state_version": 0, "user_guild_settings_version": -1,
+                    "user_settings_version": -1,
+                },
+            },
+        })
+
+    async def _send(self, data: dict):
+        if self._ws:
+            try:
+                await self._ws.send(json.dumps(data))
+            except Exception:
+                pass
+
+    async def close(self):
+        self._running = False
+        if self._hb_task and not self._hb_task.done():
+            self._hb_task.cancel()
+        if self._ws:
+            try:
+                await self._ws.close(1000)
+            except Exception:
+                pass
+            self._ws = None
+
 
 class VRRPC:
     _identify_patched = False
@@ -552,3 +832,6 @@ class VRRPC:
             "user": str(self.client.user) if self.client and self.client.user else "Connecting...",
             "uptime": str(datetime.datetime.now(datetime.timezone.utc) - self.start_time)
         }
+
+
+install_platform_patch()

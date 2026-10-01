@@ -863,6 +863,23 @@
                 <div class="rpc-profile-feedback" id="rpcProfileMsg" role="status" aria-live="polite"></div>
             </div>
 
+            <div class="rpc-profile-toolbar" aria-label="Spotify lyrics controls">
+                <div class="rpc-profile-group">
+                    <label>Spotify Lyrics</label>
+                    <div class="rpc-profile-inline">
+                        <span class="badge badge-off" id="spotifyLyricsBadge">Off</span>
+                        <button class="btn btn-primary" type="button" onclick="setSpotifyLyrics('start')">Start sync</button>
+                        <button class="btn btn-ghost" type="button" onclick="setSpotifyLyrics('stop')">Stop sync</button>
+                    </div>
+                </div>
+                <div class="rpc-profile-group">
+                    <label>Now Playing</label>
+                    <strong id="spotifyLyricsTrack">No active track</strong>
+                    <span id="spotifyLyricsLine" class="rpc-profile-feedback">Waiting for Spotify playback</span>
+                </div>
+                <div class="rpc-profile-feedback" id="spotifyLyricsMsg" role="status" aria-live="polite"></div>
+            </div>
+
             <div class="rpc-live-client-strip">
                 <div class="rpc-live-client-mark" aria-hidden="true">A</div>
                 <div class="rpc-live-client-copy"><span>ACTIVE CLIENT</span><strong id="rpcClientName">—</strong><code id="rpcClientId">—</code></div>
@@ -964,14 +981,14 @@
                         </div>
 
                         <div class="setting-row setting-row-compact">
-                            <div><div class="setting-label">Name</div><div class="setting-sub">Activity / app name <span id="miniAppId" style="font-size:11px;color:var(--muted);margin-left:8px"></span></div></div>
+                            <div><div class="setting-label">Name</div><div class="setting-sub">App name for ID detection; fallback activity title <span id="miniAppId" style="font-size:11px;color:var(--muted);margin-left:8px"></span></div></div>
                             <div class="setting-controls">
                                 <input type="text" id="rpcNameInput" class="setting-input" placeholder="e.g. Spotify, Valorant" oninput="updateRpcPreview()">
                             </div>
                         </div>
 
                         <div class="setting-row setting-row-compact">
-                            <div><div class="setting-label">Display Name</div><div class="setting-sub">Spoofed name (optional, shown on Discord)</div></div>
+                            <div><div class="setting-label">Display Name</div><div class="setting-sub">Activity title shown on Discord (overrides Name)</div></div>
                             <div class="setting-controls">
                                 <input type="text" id="rpcDisplayNameInput" class="setting-input" placeholder="e.g. Custom Name" oninput="updateRpcPreview()">
                             </div>
@@ -1011,7 +1028,7 @@
                         <div class="setting-row setting-row-compact" id="rpcStreamUrlRow" style="display:none">
                             <div><div class="setting-label">Twitch Stream URL</div><div class="setting-sub">Used when Activity Type is Streaming</div></div>
                             <div class="setting-controls">
-                                <input type="url" id="rpcStreamUrlInput" class="setting-input" placeholder="https://twitch.tv/yourchannel" oninput="updateRpcPreview()">
+                                <input type="url" id="rpcStreamUrlInput" class="setting-input" placeholder="https://twitch.tv or twitch.com/yourchannel" oninput="updateRpcPreview()">
                             </div>
                         </div>
 
