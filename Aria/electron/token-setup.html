@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'" />
+  <title>Connect Aria</title>
+  <link rel="stylesheet" href="token-setup.css" />
+  <script src="token-setup.js" defer></script>
+</head>
+<body>
+  <main class="setup-shell">
+    <header class="setup-heading">
+      <div class="brand-mark" aria-hidden="true">A</div>
+      <div>
+        <p class="eyebrow">ARIA DESKTOP</p>
+        <h1>Connect your account</h1>
+      </div>
+    </header>
+
+    <form id="token-form">
+      <label for="token">Account token</label>
+      <div class="token-field">
+        <input id="token" type="password" autocomplete="off" spellcheck="false" required />
+        <button id="reveal-token" type="button" aria-label="Show token">Show</button>
+      </div>
+
+      <label class="remember-option" for="remember-token">
+        <input id="remember-token" type="checkbox" checked />
+        <span>Remember token on this device</span>
+      </label>
+      <p id="storage-note" class="storage-note">Saved encrypted in Aria's local config.</p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+
+      <div class="actions">
+        <button id="cancel" class="secondary" type="button">Cancel</button>
+        <button id="submit" class="primary" type="submit">Save and start Aria</button>
+      </div>
+    </form>
+    <p class="privacy-note">Your token stays on this device. Never share it with anyone.</p>
+  </main>
+</body>
+</html>

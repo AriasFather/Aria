@@ -5,6 +5,7 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
+node_modules/
 
 # Runtime/cache artifacts
 .cache/
@@ -31,3 +32,5 @@ hosted_bot_*/
 hosted_*.json
 hosted_users.json
 runner_*.py
+Aria/build/
+Aria/release/

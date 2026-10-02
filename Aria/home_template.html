@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Aria | Self-Automation Tool</title>
+  <title>Aria | Web Dashboard and Runtime Control</title>
+  <meta name="description" content="Explore Aria's browser dashboard, runtime modules, presence controls, account setup, and answers to common questions." />
+  <link rel="canonical" href="/" />
   <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
   <link rel="apple-touch-icon" href="/static/images/aria-favicon.png" />
   <link rel="stylesheet" href="/static/css/panel_pages.css" />
@@ -21,6 +23,8 @@
       <div class="nav-links">
         <a href="/home">Home</a>
         <a href="/features">Features</a>
+        <a href="/docs">Docs</a>
+        <a href="/#faq">FAQ</a>
         <a href="/signup">Sign up</a>
         <a href="/login">Sign in</a>
       </div>
@@ -81,7 +85,7 @@
       </div>
     </section>
 
-    <section class="home-runtime-section" aria-label="Aria modules">
+    <section class="home-runtime-section" id="modules" aria-label="Aria modules">
       <div class="home-runtime-heading">
         <span class="home-feature-num">ARIA / MODULE INDEX</span>
         <h2>One runtime.<br><span>Every signal in view.</span></h2>
@@ -95,7 +99,7 @@
       </div>
     </section>
 
-    <section class="home-showcase home-rpc-showcase" id="home-presence">
+    <section class="home-showcase home-rpc-showcase" id="presence">
       <div class="home-showcase-heading">
         <span class="home-feature-num">PRESENCE / LIVE PREVIEW</span>
         <h2>Make the status<br><span>feel like yours.</span></h2>
@@ -127,7 +131,7 @@
       </div>
     </section>
 
-    <section class="home-trust-section" id="home-token">
+    <section class="home-trust-section" id="token">
       <div class="home-trust-copy">
         <span class="home-feature-num">INSTANCE LINK / CREDENTIAL BOUNDARY</span>
         <h2>Your token is used<br><span>to start your instance.</span></h2>
@@ -144,7 +148,7 @@
     </section>
 
     <!-- CONTROL SURFACES -->
-    <section class="home-features-section">
+    <section class="home-features-section" id="features">
       <div class="home-features-header">
         <h2 class="home-features-title">Choose your next move.</h2>
         <p class="home-features-sub">Set up an account or explore the runtime.</p>
@@ -181,6 +185,28 @@
       </div>
     </section>
 
+    <section class="home-faq-section" id="faq">
+      <div class="home-faq-heading">
+        <span class="home-feature-num">ARIA / QUICK ANSWERS</span>
+        <h2>Frequently asked questions</h2>
+        <p>Bot commands, account safety, and runtime controls.</p>
+      </div>
+      <div class="home-faq-list">
+        <details class="home-faq-item">
+          <summary>How do I find the bot's commands?</summary>
+          <p>Use <code>;help</code> for command topics and <code>;helpwall</code> for the complete list registered by your running instance. <a href="/docs#help-commands">Browse command help</a>.</p>
+        </details>
+        <details class="home-faq-item">
+          <summary>Where does the Aria bot run?</summary>
+          <p>The bot runs on its configured host. Use the browser dashboard to view and manage that runtime; public help and feature pages are available here on the website.</p>
+        </details>
+        <details class="home-faq-item">
+          <summary>How should I handle bot tokens?</summary>
+          <p>Keep tokens private and submit them only through a trusted, HTTPS-protected instance setup flow. Never include a token in screenshots, chat, or support requests. <a href="/docs#tokens">Read the token safety guide</a>.</p>
+        </details>
+      </div>
+    </section>
+
     <!-- FOOTER STRIP -->
     <footer class="home-footer">
       <div class="home-footer-brand">ARIA</div>
@@ -189,6 +215,11 @@
         <a href="/privacy">Privacy</a>
         <a href="/privacy#cookies">Cookies</a>
         <a href="/features">Features</a>
+        <a href="/docs">Docs</a>
+        <a href="/#features">Modules</a>
+        <a href="/#presence">Presence</a>
+        <a href="/#token">Token</a>
+        <a href="/#faq">FAQ</a>
         <a href="/login">Sign in</a>
       </div>
     </footer>

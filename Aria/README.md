@@ -41,6 +41,30 @@ Current Mongo-backed runtime datasets:
 
 If MongoDB is disabled or unavailable, Aria falls back to the existing JSON files automatically.
 
+## Electron desktop app
+
+Public browser and mobile access notes are on the website's `/docs` page.
+
+The Electron app opens only the protected dashboard at `/dashboard`; public pages such as `/`, `/home`, `/features`, `/get-token`, `/terms`, and `/privacy` remain website pages and open in the regular browser. Both the dashboard and website remain available on the local web server at `http://127.0.0.1:8080` (or the next available port through `8084`).
+
+For development, install the Python dependencies above, then run:
+
+```bash
+npm install
+npm start
+```
+
+The desktop app starts the Aria bot executable when packaged (or `aria.py` during development) if no dashboard is already running. On first launch, a token setup window opens. Remembered tokens are saved through Aria's encrypted config; if you turn off **Remember token**, Aria uses it only for the current run. The token is never sent to renderer storage or printed to a terminal. Use **Aria > Set / Change Token...** to update it later, **Open Dashboard in Browser** for `/dashboard`, or **Open Aria Website** for the public home page. Closing the desktop app stops a backend it started, but does not stop a backend that was already running.
+
+To build an installer for the current operating system, install the Python build dependencies and run `npm run dist`:
+
+```bash
+python -m pip install -r requirements.txt aiohttp curl-cffi colorama pyinstaller
+npm run dist
+```
+
+Build on the target operating system. The packaged backend and its runtime data are copied to the user's writable application-data folder, and existing JSON, text, and database state is retained when the app version changes.
+
 ## Dashboard session key
 
 The web dashboard creates a private 256-bit session-signing key in

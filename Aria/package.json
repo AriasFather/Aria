@@ -1,0 +1,52 @@
+{
+  "name": "aria-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron desktop shell for the Aria dashboard",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build:backend": "python -m PyInstaller --noconfirm --clean --distpath build/pyinstaller-dist --workpath build/pyinstaller-work aria.spec",
+    "dist": "npm run build:backend && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.aria.desktop",
+    "productName": "Aria",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/pyinstaller-dist/Aria",
+        "to": "aria-backend"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "allowScripts": {
+    "electron@36.9.5": true,
+    "electron-winstaller@5.4.0": true
+  }
+}

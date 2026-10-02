@@ -3226,6 +3226,26 @@ html, body {
   gap: 12px;
 }
 
+.welcome-update-status {
+  margin: 16px 20px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--a2, #0084ff);
+  border-radius: 4px;
+  color: var(--muted, #999);
+  background: var(--bg, #0f0f0f);
+  font-size: 12px;
+}
+
+.welcome-update-status[data-state="update_available"] {
+  border-left-color: #f0b44d;
+  color: #f0d69c;
+}
+
+.welcome-update-status[data-state="up_to_date"] {
+  border-left-color: #55bd86;
+  color: #a5e0bd;
+}
+
 .update-item {
   display: flex;
   gap: 12px;

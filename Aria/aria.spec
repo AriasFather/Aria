@@ -20,7 +20,7 @@ for directory in ("cogs", "core", "static", "utils", "web_ui"):
         datas.append((str(path), directory))
 
 hiddenimports = []
-for package in ("aiohttp", "curl_cffi", "flask", "pymongo", "websocket", "websockets"):
+for package in ("aiohttp", "cryptography", "curl_cffi", "flask", "pymongo", "websocket", "websockets"):
     hiddenimports += collect_submodules(package)
 
 a = Analysis(

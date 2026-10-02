@@ -1,9 +1,12 @@
 import hashlib
+import io
 import json
+import re
 import threading
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -16,6 +19,7 @@ from rpc_profiles import RPCProfileStore
 from hosted_command_registry import write_command_registry
 from hosted_rpc_bridge import dispatch_hosted_rpc, start_hosted_rpc_worker
 from webpanel import WebPanel, _PANEL_MASTER_ID
+from formatter import VERSION
 
 
 class FakeBot:
@@ -71,6 +75,7 @@ class WebPanelControlTests(unittest.TestCase):
         panel = object.__new__(WebPanel)
         panel.app = Flask("aria-webpanel-control-test")
         panel.app.secret_key = "test-session-secret"
+        panel.port = 8080
         panel._base_dir = self.temp_dir.name
         panel._start_time = 0
         panel.instance_id = "test"
@@ -86,6 +91,92 @@ class WebPanelControlTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_docs_page_is_public_and_linked_from_public_pages(self):
+        panel._read_raw_template = lambda name: (Path(__file__).resolve().parent / name).read_text(encoding="utf-8")
+
+        docs = self.client.get("/docs")
+        self.assertEqual(docs.status_code, 200)
+        docs_html = docs.get_data(as_text=True)
+        self.assertIn('data-doc-tab="commands"', docs_html)
+        self.assertIn('id="docs-search-dialog"', docs_html)
+        self.assertNotIn('href="/llms.txt"', docs_html)
+        self.assertIn(";helpwall", docs_html)
+        self.assertIn("Read command arguments", docs_html)
+        self.assertIn("multiword values in quotes", docs_html)
+        public_docs = [docs_html.lower()]
+        forbidden_topics = ("mobile", "windows", "macos", "linux", "requirements.txt", "python aria.py", "electron", "desktop app")
+        for content in public_docs:
+            for topic in forbidden_topics:
+                self.assertNotIn(topic, content)
+
+        text_index = self.client.get("/llms.txt")
+        self.assertEqual(text_index.status_code, 200)
+        self.assertTrue(text_index.mimetype.startswith("text/plain"))
+        text_index_content = text_index.get_data(as_text=True).lower()
+        self.assertIn("/docs#presence-commands", text_index_content)
+        public_docs.append(text_index_content)
+
+        home = self.client.get("/home")
+        features = self.client.get("/features")
+        self.assertIn('href="/docs"', home.get_data(as_text=True))
+        self.assertIn('href="/docs"', features.get_data(as_text=True))
+        home_html = home.get_data(as_text=True).lower()
+        public_docs.append(home_html)
+        for content in public_docs:
+            for topic in forbidden_topics:
+                self.assertNotIn(topic, content)
+
+    def test_update_api_uses_real_version_and_detects_remote_commits(self):
+        local_commit = "a" * 40
+        latest_commit = "b" * 40
+        commits = [
+            {
+                "sha": latest_commit,
+                "commit": {"message": "Improve dashboard version display", "author": {"date": "2026-10-02T00:00:00Z"}},
+                "html_url": f"https://github.com/misconsiderations/Aria/commit/{latest_commit}",
+            },
+            {
+                "sha": local_commit,
+                "commit": {"message": "Previous commit", "author": {"date": "2026-10-01T00:00:00Z"}},
+                "html_url": f"https://github.com/misconsiderations/Aria/commit/{local_commit}",
+            },
+        ]
+        panel._update_info_cache = None
+        panel._update_info_checked_at = 0
+        panel._update_info_lock = threading.Lock()
+        git_results = [
+            SimpleNamespace(returncode=0, stdout=self.temp_dir.name),
+            SimpleNamespace(returncode=0, stdout=local_commit),
+            SimpleNamespace(returncode=0, stdout=""),
+        ]
+
+        with patch("webpanel.subprocess.run", return_value=SimpleNamespace(returncode=1, stdout="")):
+            version_response = self.client.get("/api/max/version-info")
+
+        with patch("webpanel.subprocess.run", side_effect=git_results), patch(
+            "webpanel.urllib.request.urlopen",
+            return_value=io.BytesIO(json.dumps(commits).encode("utf-8")),
+        ):
+            updates_response = self.client.get("/api/max/updates")
+
+        self.assertEqual(version_response.json["version"], VERSION)
+        self.assertTrue(updates_response.json["ok"])
+        self.assertTrue(updates_response.json["update_available"])
+        self.assertEqual(updates_response.json["status"], "update_available")
+        self.assertEqual(updates_response.json["version"], VERSION)
+        self.assertEqual(updates_response.json["commits"][0]["title"], "Improve dashboard version display")
+
+    def test_homepage_has_fragment_links_for_search_sections(self):
+        panel._read_raw_template = lambda name: (Path(__file__).resolve().parent / name).read_text(encoding="utf-8")
+
+        response = self.client.get("/")
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<link rel="canonical" href="/" />', html)
+        for anchor in ("features", "presence", "token", "faq"):
+            self.assertIn(f'id="{anchor}"', html)
+            self.assertIn(f'href="/#{anchor}"', html)
 
     def test_rpc_and_logger_mutations_require_authentication(self):
         self.assertEqual(self.client.get("/api/rpc").status_code, 403)
@@ -657,6 +748,81 @@ class WebPanelControlTests(unittest.TestCase):
         self.assertEqual(saved[panel.owner_id]["role"], "admin")
         self.assertTrue(panel._password_matches("TEST_OWNER_PASSWORD", saved[panel.owner_id]["password_hash"]))
 
+    def test_primary_owner_username_is_renny_on_every_start(self):
+        owner_id = _PANEL_MASTER_ID
+        users = {
+            owner_id: {
+                "username": "admin",
+                "password_hash": panel._hash_pw("existing-password"),
+                "instance_id": "main",
+                "role": "admin",
+            }
+        }
+        panel.owner_id = owner_id
+        panel.rotate_owner_password = False
+        panel._load_dashboard_users = lambda: dict(users)
+        panel._save_dashboard_users = lambda updated: (users.clear(), users.update(updated))
+        panel._read_owner_config = lambda: {"owner_username": "old-owner-name"}
+        panel._configured_admin_ids = lambda: {owner_id}
+
+        panel._ensure_admin_account()
+
+        self.assertEqual(users[owner_id]["username"], "renny")
+        self.assertTrue(panel._password_matches("existing-password", users[owner_id]["password_hash"]))
+
+    def test_generated_owner_password_rotates_and_prints_only_to_terminal(self):
+        users = {
+            panel.owner_id: {
+                "username": "aria-owner",
+                "password_hash": panel._hash_pw("previous-password"),
+                "instance_id": "main",
+                "role": "admin",
+            }
+        }
+        panel.rotate_owner_password = True
+        panel._load_dashboard_users = lambda: dict(users)
+        panel._save_dashboard_users = lambda updated: (users.clear(), users.update(updated))
+        panel._read_owner_config = lambda: {}
+        panel._configured_admin_ids = lambda: {panel.owner_id}
+
+        emitted = io.StringIO()
+        with redirect_stdout(emitted):
+            panel._ensure_admin_account()
+
+        output = emitted.getvalue()
+        password_match = re.search(r"Password\s*:\s*(\S+)", output)
+        self.assertIn("Username : aria-owner", output)
+        self.assertIn(f"Owner ID : {panel.owner_id}", output)
+        self.assertIn("Sign in  : http://127.0.0.1:8080/login", output)
+        self.assertIsNotNone(password_match)
+        rotated_password = password_match.group(1)
+        self.assertNotEqual(rotated_password, "previous-password")
+        self.assertTrue(panel._password_matches(rotated_password, users[panel.owner_id]["password_hash"]))
+        self.assertNotIn(rotated_password, json.dumps(users))
+
+    def test_noninteractive_start_does_not_rotate_or_print_owner_password(self):
+        previous_password = "previous-password"
+        users = {
+            panel.owner_id: {
+                "username": "aria-owner",
+                "password_hash": panel._hash_pw(previous_password),
+                "instance_id": "main",
+                "role": "admin",
+            }
+        }
+        panel.rotate_owner_password = False
+        panel._load_dashboard_users = lambda: dict(users)
+        panel._save_dashboard_users = lambda updated: (users.clear(), users.update(updated))
+        panel._read_owner_config = lambda: {}
+        panel._configured_admin_ids = lambda: {panel.owner_id}
+
+        emitted = io.StringIO()
+        with redirect_stdout(emitted):
+            panel._ensure_admin_account()
+
+        self.assertEqual(emitted.getvalue(), "")
+        self.assertTrue(panel._password_matches(previous_password, users[panel.owner_id]["password_hash"]))
+
     def test_password_reset_approval_is_owner_only_and_rotates_once(self):
         users = {"target-id": {"username": "aria-user", "password_hash": "old-hash"}}
         requests = [{"id": "reset-1", "type": "password_reset", "user_id": "target-id", "status": "pending"}]
@@ -834,6 +1000,49 @@ class WebPanelControlTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], "/dashboard")
+
+    def test_primary_owner_can_sign_in_with_username_discord_id_and_password(self):
+        owner_id = _PANEL_MASTER_ID
+        password = "terminal-owner-password"
+        users = {
+            owner_id: {
+                "username": "renny",
+                "password_hash": panel._hash_pw(password),
+                "instance_id": "main",
+                "role": "admin",
+            }
+        }
+        panel._load_dashboard_users = lambda: dict(users)
+        panel._save_dashboard_users = lambda updated: (users.clear(), users.update(updated))
+        panel._configured_admin_ids = lambda: {owner_id}
+        panel._mark_login_success = lambda *args: None
+
+        response = self.client.post("/login", data={
+            "csrf_token": "test-csrf-token",
+            "username": "renny",
+            "discord_id": owner_id,
+            "password": password,
+            "next": "/dashboard",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/dashboard")
+        with self.client.session_transaction() as active_session:
+            self.assertTrue(active_session["authenticated"])
+            self.assertEqual(active_session["user_id"], owner_id)
+            self.assertEqual(active_session["role"], "admin")
+
+    def test_login_page_explains_primary_owner_credentials_without_exposing_them(self):
+        panel._read_raw_template = lambda name: (Path(__file__).resolve().parent / name).read_text(encoding="utf-8")
+
+        response = self.client.get("/login")
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Username: <code>renny</code>", html)
+        self.assertIn("Owner ID shown in the Aria startup terminal", html)
+        self.assertIn("latest startup banner", html)
+        self.assertNotIn("terminal-owner-password", html)
 
     def test_instance_link_rejects_missing_csrf_before_reading_token(self):
         self.authenticated = True

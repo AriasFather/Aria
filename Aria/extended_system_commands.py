@@ -41,7 +41,6 @@ def setupExtendedSystemCommands(bot, deleteAfterDelayFunc):
             result += f"\n... and {len(friendIds) - 20} more"
 
         _reply(ctx, result)
-
     @bot.command(name="friendcount")
     def friendcountCmd(ctx, args):
         scraper = _friend_scraper(ctx)
@@ -221,5 +220,3 @@ def setupExtendedSystemCommands(bot, deleteAfterDelayFunc):
             result += f"{status} {acc['user_id']} | prefix: {acc['prefix']}\n"
 
         _reply(ctx, result)
-
-    print("✓ Extended system commands loaded (Friend scraper + Self-hosting)")

@@ -1,0 +1,165 @@
+{
+  "297588166653902849": {
+    "password_hash": "scrypt:32768:8:1$XujrIBrjyQDNxKEK$3ef81abae673541b36f1586494ce0d8997bc6ca57f6068934829371f0bcc9ebec50469c9b2a8d8090f7d3b1a9ef3591c2c818a277aa99cc7e4aa46520a733ed6",
+    "instance_id": "main",
+    "username": "renny",
+    "role": "admin",
+    "created_at": 1790895077,
+    "last_login_at": 1790899947,
+    "last_seen_at": 1790900786,
+    "last_login_ip": "127.0.0.1",
+    "last_seen_ip": "127.0.0.1",
+    "last_actions": [
+      {
+        "ts": 1790899947,
+        "action": "login",
+        "details": "Dashboard sign in",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899991,
+        "action": "navigate",
+        "details": "Opened hosted",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899992,
+        "action": "navigate",
+        "details": "Opened chat",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899993,
+        "action": "navigate",
+        "details": "Opened logger",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899994,
+        "action": "navigate",
+        "details": "Opened presence",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899996,
+        "action": "navigate",
+        "details": "Opened analytics",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899996,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790899999,
+        "action": "navigate",
+        "details": "Opened overview",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900011,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900012,
+        "action": "navigate",
+        "details": "Opened history",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900013,
+        "action": "navigate",
+        "details": "Opened friends",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900013,
+        "action": "navigate",
+        "details": "Opened selfHosted",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900014,
+        "action": "navigate",
+        "details": "Opened logger",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900049,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900051,
+        "action": "spotify_lyrics",
+        "details": "Started Spotify lyrics sync",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900053,
+        "action": "spotify_lyrics",
+        "details": "Stopped Spotify lyrics sync",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900055,
+        "action": "navigate",
+        "details": "Opened account",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900058,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900176,
+        "action": "navigate",
+        "details": "Opened presence",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900244,
+        "action": "navigate",
+        "details": "Opened overview",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900712,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900713,
+        "action": "navigate",
+        "details": "Opened administration",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900714,
+        "action": "navigate",
+        "details": "Opened commands",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900784,
+        "action": "navigate",
+        "details": "Opened overview",
+        "ip": "127.0.0.1"
+      },
+      {
+        "ts": 1790900786,
+        "action": "navigate",
+        "details": "Opened rpc",
+        "ip": "127.0.0.1"
+      }
+    ]
+  }
+}

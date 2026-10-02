@@ -1411,24 +1411,21 @@ def _start_web_panel_early(webpanel_module):
     
     for port in ports_to_try:
         try:
-            print(f"Initializing web panel on port {port} (early startup)...")
-            
             web_panel = webpanel_module.WebPanel(
                 api=None,  # No API yet
                 bot=None,  # No bot yet
                 host="127.0.0.1",
                 port=port,
                 instance_id="main",
-                # owner_id removed (was 299182971213316107)
+                owner_id=_PRIMARY_OWNER_ID,
+                rotate_owner_password=bool(sys.stdout and sys.stdout.isatty()),
             )
             
-            print("Starting web panel...")
             started = False
             if hasattr(web_panel, "start"):
                 started = web_panel.start()
             
             if started:
-                print(f"✓ Web panel started automatically at http://127.0.0.1:{port}")
                 return  # Success, exit the loop
             else:
                 print(f"✗ Failed to start web panel on port {port}")
@@ -1454,8 +1451,6 @@ def _start_web_panel(webpanel_module, bot):
         instance_id = str(getattr(bot, "instance_id", "main"))
         instance_owner = getattr(bot, "ownerId", None)
         
-        print(f"Initializing web panel (instance: {instance_id}, owner: {instance_owner})...")
-        
         web_panel = webpanel_module.WebPanel(
             api=getattr(bot, "api", None),
             bot=bot,
@@ -1463,9 +1458,9 @@ def _start_web_panel(webpanel_module, bot):
             port=8080,
             instance_id=instance_id,
             owner_id=str(instance_owner or getattr(bot, "ownerId", None)),
+            rotate_owner_password=bool(sys.stdout and sys.stdout.isatty()),
         )
         
-        print("Starting web panel...")
         started = False
         if hasattr(web_panel, "start"):
             started = web_panel.start()
@@ -1474,9 +1469,7 @@ def _start_web_panel(webpanel_module, bot):
         if started and hasattr(bot, "_web_panel"):
             bot._web_panel = web_panel
 
-        if started:
-            print("✓ Web panel started automatically at http://127.0.0.1:8080")
-        else:
+        if not started:
             print("✗ Failed to start web panel automatically")
             # Check for error details
             if hasattr(web_panel, "get_last_start_error"):
@@ -1498,7 +1491,6 @@ def main():
     token = config.get("token")
     
     if not HOSTED_MODE:
-        print("Starting web panel automatically...")
         try:
             import importlib
             webpanel_module = importlib.import_module("web_panel")
@@ -1512,6 +1504,9 @@ def main():
         else:
             _start_web_panel_early(webpanel_module)
     
+    if os.environ.get("ARIA_DESKTOP_MODE") == "1" and os.environ.get("ARIA_TOKEN_STDIN") == "1":
+        token = sys.stdin.readline().rstrip("\r\n")
+
     if not token or token == "token here":
         print(f"Error: No token found in {config.config_file}")
         print(f"Edit {config.config_file} and add your token")
@@ -1568,7 +1563,6 @@ def main():
             web_panel.bot = bot
             if hasattr(bot, "_web_panel"):
                 bot._web_panel = web_panel
-            print("✓ Web panel context attached to live bot")
     except Exception as e:
         print(f"[webpanel] context attach failed: {e}")
 

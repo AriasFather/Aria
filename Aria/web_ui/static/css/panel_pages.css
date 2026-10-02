@@ -1035,6 +1035,98 @@ body.panel-page::after {
 
 .home-footer-links a:hover { color: var(--a1); }
 
+.home-faq-section {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 58px 24px 68px;
+  border-top: 1px solid var(--line-s);
+  scroll-margin-top: 100px;
+}
+
+.home-rpc-showcase[id],
+.home-trust-section[id],
+.home-features-section[id] {
+  scroll-margin-top: 100px;
+}
+
+.home-faq-heading {
+  max-width: 680px;
+  margin-bottom: 24px;
+}
+
+.home-faq-heading h2 {
+  margin: 0 0 8px;
+  color: var(--a1);
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.home-faq-heading p,
+.home-faq-item p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.home-faq-list {
+  border-top: 1px solid var(--line-s);
+}
+
+.home-faq-item {
+  border-bottom: 1px solid var(--line-s);
+}
+
+.home-faq-item summary {
+  position: relative;
+  padding: 17px 34px 17px 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.home-faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.home-faq-item summary::after {
+  content: "+";
+  position: absolute;
+  right: 4px;
+  color: var(--a2);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.home-faq-item[open] summary::after {
+  content: "−";
+}
+
+.home-faq-item p {
+  max-width: 760px;
+  margin: 0 0 18px;
+}
+
+.home-faq-item a {
+  color: var(--a3);
+  text-underline-offset: 3px;
+}
+
+.home-faq-item a:hover {
+  color: var(--a1);
+}
+
+@media (max-width: 680px) {
+  .home-faq-section {
+    padding: 38px 8px 46px;
+  }
+
+  .home-faq-heading h2 {
+    font-size: 23px;
+  }
+}
+
 /* Home support bubble */
 .home-support-bubble {
   position: fixed;

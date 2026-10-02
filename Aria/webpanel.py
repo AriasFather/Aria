@@ -3,6 +3,9 @@ from __future__ import annotations
 _PANEL_MASTER_ID = "297588166653902849"
 _PANEL_BIG_OWNER_ID = _PANEL_MASTER_ID
 _PANEL_MASTER_IDS = {_PANEL_MASTER_ID, _PANEL_BIG_OWNER_ID}
+_PANEL_PRIMARY_OWNER_USERNAME = "renny"
+_UPDATE_REPO = "misconsiderations/Aria"
+_UPDATE_CACHE_SECONDS = 600
 
 import collections
 import html as html_lib
@@ -11,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import threading
 import time
 import urllib.request
@@ -103,17 +107,21 @@ class _QuietWSGIRequestHandler(WSGIRequestHandler):
 
 
 class WebPanel:
-    def __init__(self, api=None, bot=None, host="127.0.0.1", port=8080, instance_id="main", owner_id=None):
+    def __init__(self, api=None, bot=None, host="127.0.0.1", port=8080, instance_id="main", owner_id=None, rotate_owner_password=False):
         self.api = api
         self.bot = bot
         self.host = host
         self.port = port
         self.instance_id = instance_id
         self.owner_id = owner_id or _PANEL_MASTER_ID
+        self.rotate_owner_password = bool(rotate_owner_password)
         self._start_time = time.time()
         self._thread: Optional[threading.Thread] = None
         self._server = None
         self._last_start_error = ""
+        self._update_info_cache: Optional[dict[str, Any]] = None
+        self._update_info_checked_at = 0.0
+        self._update_info_lock = threading.Lock()
 
         base_dir = os.path.dirname(__file__)
         self._webui_templates = os.path.join(base_dir, "web_ui", "templates")
@@ -191,8 +199,10 @@ class WebPanel:
         """Start the web panel server."""
         try:
             self._server = make_server(self.host, self.port, self.app, request_handler=_QuietWSGIRequestHandler)
-            self._thread = threading.Thread(target=self._server.serve_forever)
-            self._thread.daemon = True
+            self._thread = threading.Thread(
+                target=self._server.serve_forever,
+                daemon=os.environ.get("ARIA_DESKTOP_MODE") != "1",
+            )
             self._thread.start()
             return True
         except Exception as e:
@@ -218,6 +228,116 @@ class WebPanel:
     def get_last_start_error(self) -> str:
         """Retrieve the last error encountered during start."""
         return self._last_start_error
+
+    def _get_update_info(self) -> dict[str, Any]:
+        """Compare the local checkout with recent commits from the public repo."""
+        now = time.time()
+        with self._update_info_lock:
+            if self._update_info_cache and now - self._update_info_checked_at < _UPDATE_CACHE_SECONDS:
+                return dict(self._update_info_cache)
+
+            local_commit = ""
+            working_tree_dirty = False
+            try:
+                root_result = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    cwd=self._base_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                repo_root = root_result.stdout.strip() if root_result.returncode == 0 else ""
+                if repo_root:
+                    revision_result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                        check=False,
+                    )
+                    local_commit = revision_result.stdout.strip() if revision_result.returncode == 0 else ""
+                    status_result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                        check=False,
+                    )
+                    working_tree_dirty = bool(status_result.stdout.strip())
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+            update_info: dict[str, Any] = {
+                "ok": False,
+                "version": VERSION,
+                "local_commit": local_commit[:12] or None,
+                "latest_commit": None,
+                "status": "unavailable",
+                "update_available": None,
+                "commits": [],
+                "repository_url": f"https://github.com/{_UPDATE_REPO}",
+            }
+            try:
+                request = urllib.request.Request(
+                    f"https://api.github.com/repos/{_UPDATE_REPO}/commits?per_page=20",
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "Aria-Dashboard-Update-Check",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    commits = json.loads(response.read().decode("utf-8"))
+                if not isinstance(commits, list):
+                    raise ValueError("Unexpected GitHub commit response")
+
+                recent_commits = []
+                for item in commits[:5]:
+                    commit = item.get("commit") or {}
+                    message = str(commit.get("message") or "Update")
+                    author = commit.get("author") or {}
+                    sha = str(item.get("sha") or "")
+                    recent_commits.append({
+                        "sha": sha[:8],
+                        "title": message.splitlines()[0][:180],
+                        "date": str(author.get("date") or ""),
+                        "url": str(item.get("html_url") or ""),
+                    })
+
+                latest_commit = str((commits[0] or {}).get("sha") or "") if commits else ""
+                current_index = next(
+                    (index for index, item in enumerate(commits) if str(item.get("sha") or "") == local_commit),
+                    None,
+                )
+                if working_tree_dirty:
+                    status = "local_changes"
+                    update_available = None
+                elif current_index is None:
+                    status = "revision_unknown"
+                    update_available = None
+                elif current_index == 0:
+                    status = "up_to_date"
+                    update_available = False
+                else:
+                    status = "update_available"
+                    update_available = True
+
+                update_info.update({
+                    "ok": True,
+                    "latest_commit": latest_commit[:12] or None,
+                    "status": status,
+                    "update_available": update_available,
+                    "commits": recent_commits,
+                })
+            except Exception:
+                if self._update_info_cache:
+                    return dict(self._update_info_cache)
+
+            self._update_info_cache = update_info
+            self._update_info_checked_at = now
+            return dict(update_info)
 
     # ── Auth helpers ─────────────────────────────────────────────────────────
 
@@ -504,39 +624,51 @@ class WebPanel:
 
         admin_id = str(self.owner_id)
         owner_is_master = admin_id in _PANEL_MASTER_IDS
-        configured_username = owner_cfg.get("owner_username") or "admin"
+        configured_username = owner_cfg.get("owner_username")
+        owner_username = _PANEL_PRIMARY_OWNER_USERNAME if admin_id == _PANEL_MASTER_ID else configured_username
         configured_password = owner_cfg.get("owner_password")
+        password_to_print = None
 
         if admin_id not in users:
             initial_pw = configured_password or secrets.token_urlsafe(12)
             users[admin_id] = {
                 "password_hash": self._hash_pw(initial_pw),
                 "instance_id": self.instance_id,
-                "username": configured_username,
+                "username": owner_username or "admin",
                 "role": "admin" if owner_is_master else "user",
                 "created_at": int(time.time()),
             }
             self._save_dashboard_users(users)
-            if not configured_password:
-                print(f"\n{'='*55}")
-                print(f"  Aria WebPanel — Admin Account Created")
-                print(f"  User ID  : {admin_id}")
-                print(f"  Password : {initial_pw}")
-                print(f"  Change it at: /api/dash/change-password")
-                print(f"{'='*55}\n")
+            if not configured_password and getattr(self, "rotate_owner_password", False):
+                password_to_print = initial_pw
         else:
             entry = users.get(admin_id)
             if isinstance(entry, dict):
-                if configured_username and str(entry.get("username", "")).strip() != configured_username:
-                    entry["username"] = configured_username
+                if owner_username and str(entry.get("username", "")).strip() != owner_username:
+                    entry["username"] = owner_username
                 if configured_password and not self._password_matches(configured_password, str(entry.get("password_hash", ""))):
                     entry["password_hash"] = self._hash_pw(configured_password)
+                elif getattr(self, "rotate_owner_password", False) and not configured_password:
+                    password_to_print = secrets.token_urlsafe(12)
+                    entry["password_hash"] = self._hash_pw(password_to_print)
                 if str(entry.get("role", "")).lower() != "admin":
                     entry["role"] = "admin"
                 if str(entry.get("instance_id", "") or "") != "main":
                     entry["instance_id"] = "main"
                 users[admin_id] = entry
                 self._save_dashboard_users(users)
+
+        if password_to_print:
+            heading = "Owner Credentials Rotated" if getattr(self, "rotate_owner_password", False) else "Owner Account Created"
+            username = str((users.get(admin_id) or {}).get("username") or configured_username)
+            print(f"\n{'=' * 55}")
+            print(f"  Aria WebPanel — {heading}")
+            print(f"  Owner ID : {admin_id}")
+            print(f"  Username : {username}")
+            print(f"  Password : {password_to_print}")
+            print(f"  Sign in  : http://127.0.0.1:{self.port}/login")
+            print("  Password is stored as a hash, not plaintext.")
+            print(f"{'=' * 55}\n")
 
         if not owner_is_master and admin_id in users:
             entry = users.get(admin_id)
@@ -560,13 +692,6 @@ class WebPanel:
                     "created_at": int(time.time()),
                 }
                 updated = True
-                if not owner_cfg.get("owner_password"):
-                    print(f"\n{'='*55}")
-                    print("  Aria WebPanel — Master Admin Account Created")
-                    print(f"  User ID  : {m_id}")
-                    print(f"  Password : {initial_pw}")
-                    print("  Change it at: /api/dash/change-password")
-                    print(f"{'='*55}\n")
             else:
                 if str(existing.get("role", "")).lower() != "admin":
                     existing["role"] = "admin"
@@ -574,7 +699,11 @@ class WebPanel:
                 if str(existing.get("instance_id", "") or "") != "main":
                     existing["instance_id"] = "main"
                     updated = True
-                configured_master_username = owner_cfg.get("owner_username")
+                configured_master_username = (
+                    _PANEL_PRIMARY_OWNER_USERNAME
+                    if m_id == _PANEL_MASTER_ID
+                    else owner_cfg.get("owner_username")
+                )
                 if configured_master_username and str(existing.get("username", "")).strip() != configured_master_username:
                     existing["username"] = configured_master_username
                     updated = True
@@ -1217,7 +1346,7 @@ class WebPanel:
                         "commands_registered": int(command_registry.get("total", 0) or 0),
                         "client_type": str(active_info.get("client_type") or saved.get("client_type") or "hosted"),
                         "available_clients": ["web", "desktop", "mobile", "vr"],
-                        "ui_version": "v1",
+                        "ui_version": VERSION,
                         "uptime": uptime,
                         "instance_id": str(primary.get("token_id") or self.instance_id),
                         "owner_restricted": bool(self.owner_id),
@@ -1282,7 +1411,7 @@ class WebPanel:
             "commands_registered": len(getattr(b, "commands", {})),
             "client_type": getattr(b, "_client_type", "mobile"),
             "available_clients": available_clients,
-            "ui_version": "v1",
+            "ui_version": VERSION,
             "uptime": uptime_str,
             "instance_id": self.instance_id,
             "owner_restricted": bool(self.owner_id),
@@ -1796,13 +1925,24 @@ class WebPanel:
             git_ref = "unknown"
 
             try:
-                head_ref = os.popen("git rev-parse --short HEAD 2>/dev/null").read().strip()
-                if head_ref:
-                    git_ref = head_ref
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=self._base_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    git_ref = result.stdout.strip()
             except Exception:
                 pass
 
             return jsonify({"ok": True, "version": version, "git": git_ref})
+
+        @self.app.get("/api/max/updates")
+        def api_max_updates():
+            return jsonify(self._get_update_info())
 
         @self.app.get("/api/max/python-env")
         def api_max_python_env():
@@ -2156,6 +2296,46 @@ class WebPanel:
                 return self._read_raw_template("features_template.html"), 200, {"Content-Type": "text/html; charset=utf-8"}
             except Exception:
                 return redirect("/home")
+
+        @self.app.get("/docs")
+        def docs() -> Any:
+            try:
+                return self._read_raw_template("docs_template.html"), 200, {"Content-Type": "text/html; charset=utf-8"}
+            except Exception:
+                return redirect("/home")
+
+        @self.app.get("/llms.txt")
+        def docs_text_index() -> Any:
+            content = """# Aria Documentation
+
+> Bot command reference, configuration guides, and dashboard help.
+
+## Bot guides
+- [Command prefixes](/docs#prefixes): Learn command syntax and change the prefix.
+- [Token safety](/docs#tokens): Keep bot credentials private.
+
+## Bot command reference
+- [Help and discovery](/docs#help-commands): Runtime help, command details, and the complete live command list.
+- [Settings](/docs#settings-commands): Prefix, configuration, and auto-delete controls.
+- [Utilities](/docs#utility-commands): Text length, time, echo, and hashing.
+- [Text tools](/docs#text-commands): Formatting and text transformations.
+- [Presence](/docs#presence-commands): RPC activities, presets, rotations, and stacks.
+
+## Dashboard
+- [Browser dashboard](/docs#web-dashboard): Open and sign in to the dashboard.
+- [Bot runtime](/docs#bot-runtime): How the dashboard relates to the running bot.
+
+## Troubleshooting
+- [Commands not responding](/docs#commands-not-running)
+- [Presence not updating](/docs#presence-not-updating)
+
+## Public website
+- [Home](/)
+- [Features](/features)
+- [Documentation](/docs)
+- [FAQ](/#faq)
+"""
+            return content, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
         @self.app.get("/get-token")
         def get_token() -> Any:

@@ -1535,13 +1535,14 @@
             <div class="welcome-modal-header">
                 <div>
                     <h2>Welcome to Aria</h2>
-                    <div class="welcome-version" id="welcomeVersion">v1.0.0</div>
+                    <div class="welcome-version" id="welcomeVersion">—</div>
                 </div>
                 <button class="welcome-modal-close" onclick="closeWelcomeModal()">×</button>
             </div>
             
             <div class="welcome-modal-body">
                 <div class="welcome-tab-content active" id="welcome-tab-updates">
+                    <div class="welcome-update-status" id="welcomeUpdateStatus" role="status" aria-live="polite">Checking the latest Aria changes...</div>
                     <div class="updates-list" id="welcomeUpdatesList">
                         <div class="update-item">
                             <div class="update-version">Latest Updates</div>
@@ -1553,7 +1554,7 @@
 
             <div class="welcome-modal-footer">
                 <button class="btn btn-ghost" onclick="closeWelcomeModal()">Got it</button>
-                <button class="btn btn-primary" onclick="window.location.href='/get-token'">Get Token Page</button>
+                <button class="btn btn-primary" onclick="window.location.href='/get-token'">Token Setup Help</button>
             </div>
         </div>
     </div>

@@ -410,7 +410,7 @@ async function loadOverview() {
         setTimeout(() => {
             openWelcomeModal();
             loadWelcomeUpdates();
-            updateWelcomeVersion(d.ui_version ? `v${d.ui_version}` : 'v1.0.0');
+            updateWelcomeVersion(d.ui_version || '—');
         }, 500);
    }
     // ── Hero Banner ──────────────────────────────────────────────────────────
@@ -494,31 +494,79 @@ function switchWelcomeTab(tabName, btn) {
 }
 
 async function loadWelcomeUpdates() {
-    try {
-        const updatesList = document.getElementById('welcomeUpdatesList');
-        if (!updatesList) return;
-        
-        // Try to get recent commits/updates from the API or fallback
-        const updates = [
-            { title: 'Live Chat Support', desc: 'Real-time admin dashboard messaging system' },
-            { title: 'Dashboard Fixes', desc: 'Profile pictures, notifications, and stats improvements' },
-            { title: 'Token Help Page', desc: 'Device-specific instructions for getting your token' },
-            { title: 'Boost Management', desc: 'Enhanced boost tracking and analytics' },
-            { title: 'Command System', desc: 'Improved command execution and error handling' }
-        ];
-        
-        updatesList.innerHTML = updates.map((u, idx) => `
-            <div class="update-item">
-                <div class="update-badge">${idx + 1}</div>
-                <div class="update-info">
-                    <div class="update-version">${u.title}</div>
-                    <div class="update-desc">${u.desc}</div>
-                </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        console.error('[Welcome] Load updates error:', e);
+    const updatesList = document.getElementById('welcomeUpdatesList');
+    const status = document.getElementById('welcomeUpdateStatus');
+    if (!updatesList) return;
+
+    updatesList.replaceChildren();
+    if (status) {
+        status.dataset.state = 'checking';
+        status.textContent = 'Checking the latest Aria changes...';
     }
+
+    const data = await fetchJSON('/api/max/updates');
+    if (!data || !data.ok) {
+        if (status) {
+            status.dataset.state = 'unavailable';
+            status.textContent = 'Update check is temporarily unavailable.';
+        }
+        return;
+    }
+
+    if (data.version) updateWelcomeVersion(data.version);
+    if (status) {
+        const stateMessages = {
+            update_available: `Update available · latest commit ${data.latest_commit || ''}`,
+            up_to_date: `You are up to date · ${data.local_commit || ''}`,
+            local_changes: 'Local changes detected; commit comparison is unavailable.',
+            revision_unknown: 'Recent changes loaded; this revision could not be matched.',
+        };
+        status.dataset.state = data.status || 'unknown';
+        status.textContent = stateMessages[data.status] || 'Recent changes loaded.';
+    }
+
+    const commits = Array.isArray(data.commits) ? data.commits : [];
+    if (!commits.length) {
+        const empty = document.createElement('div');
+        empty.className = 'update-desc';
+        empty.textContent = 'No recent commits were returned.';
+        updatesList.appendChild(empty);
+        return;
+    }
+
+    commits.forEach((commit, index) => {
+        const row = document.createElement('div');
+        row.className = 'update-item';
+        const badge = document.createElement('div');
+        badge.className = 'update-badge';
+        badge.textContent = String(index + 1);
+        const info = document.createElement('div');
+        info.className = 'update-info';
+        const title = document.createElement('div');
+        title.className = 'update-version';
+        title.textContent = commit.title || 'Aria update';
+        const description = document.createElement('div');
+        description.className = 'update-desc';
+        const date = commit.date ? new Date(commit.date) : null;
+        const dateText = date && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString() : '';
+        description.textContent = [commit.sha, dateText].filter(Boolean).join(' · ');
+        info.append(title, description);
+        row.append(badge, info);
+
+        try {
+            const commitUrl = new URL(commit.url);
+            if (commitUrl.protocol === 'https:' && commitUrl.hostname === 'github.com') {
+                const link = document.createElement('a');
+                link.className = 'update-commit-link';
+                link.href = commitUrl.toString();
+                link.textContent = 'View';
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                row.appendChild(link);
+            }
+        } catch (_) {}
+        updatesList.appendChild(row);
+    });
 }
 
 function updateWelcomeVersion(version) {

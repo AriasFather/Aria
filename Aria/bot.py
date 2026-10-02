@@ -275,7 +275,6 @@ class DiscordBot:
                     existing_file = ""
                     new_file = ""
                 if existing_file and new_file and existing_file == new_file:
-                    print(f"[COMMAND-REGISTER] duplicate command skipped: {k} ({new_file})")
                     return
 
         self.commands[k] = cmd_obj

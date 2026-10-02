@@ -503,7 +503,6 @@ Features: {', '.join(guild.get('features', [])) or 'None'}"""
             msg = ctx["api"].send_message(ctx["channel_id"], f"```Error: {str(e)}```")
             if msg:
                 delete_after_delay_func(ctx["api"], ctx["channel_id"], msg.get("id"))
-    
     @bot.command(name="dec2hex")
     def dec2hex_cmd(ctx, args):
         """Convert decimal to hex"""
@@ -542,5 +541,3 @@ Features: {', '.join(guild.get('features', [])) or 'None'}"""
             msg = ctx["api"].send_message(ctx["channel_id"], f"```Error: {str(e)}```")
             if msg:
                 delete_after_delay_func(ctx["api"], ctx["channel_id"], msg.get("id"))
-    
-    print("✓ Extended commands pack loaded (100+ commands)")

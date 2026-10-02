@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aria Documentation | Guides and Command Reference</title>
+  <meta name="description" content="Aria setup guides, verified bot command reference, dashboard help, and troubleshooting." />
+  <link rel="icon" type="image/png" href="/static/images/aria-favicon.png" />
+  <link rel="stylesheet" href="/static/css/panel_pages.css" />
+  <link rel="stylesheet" href="/static/css/docs.css" />
+  <script src="/static/js/docs_index.js" defer></script>
+</head>
+<body class="panel-page">
+  <div class="page-wrap">
+    <nav class="top-nav" aria-label="Main navigation">
+      <a class="brand" href="/home" aria-label="Aria home">
+        <img class="brand-mark" src="/static/images/aria-favicon.png" alt="" />
+        <span>Aria</span><span class="brand-divider" aria-hidden="true">|</span>
+      </a>
+      <div class="nav-links">
+        <a href="/home">Home</a>
+        <a href="/features">Features</a>
+        <a href="/docs" aria-current="page">Docs</a>
+        <a href="/#faq">FAQ</a>
+        <a href="/signup">Sign up</a>
+        <a href="/login?next=/dashboard">Sign in</a>
+      </div>
+    </nav>
+
+    <header class="docs-hero docs-index-hero">
+      <p class="docs-kicker">ARIA / DOCUMENTATION INDEX</p>
+      <h1>Guides for the bot you run.</h1>
+      <p class="docs-intro">Setup, command reference, dashboard use, and troubleshooting for Aria's bot runtime and browser UI.</p>
+      <button id="docs-search-open" class="docs-search-trigger" type="button" aria-haspopup="dialog" aria-controls="docs-search-dialog">
+        <span>Search guides and commands</span><kbd>Ctrl K</kbd>
+      </button>
+    </header>
+
+    <nav class="docs-tabs" role="tablist" aria-label="Documentation sections">
+      <button id="docs-tab-guides" class="docs-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="docs-panel-guides" data-doc-tab="guides">Guides</button>
+      <button id="docs-tab-commands" class="docs-tab" type="button" role="tab" aria-selected="false" aria-controls="docs-panel-commands" data-doc-tab="commands">Bot Commands</button>
+      <button id="docs-tab-dashboard" class="docs-tab" type="button" role="tab" aria-selected="false" aria-controls="docs-panel-dashboard" data-doc-tab="dashboard">Dashboard</button>
+      <button id="docs-tab-troubleshooting" class="docs-tab" type="button" role="tab" aria-selected="false" aria-controls="docs-panel-troubleshooting" data-doc-tab="troubleshooting">Troubleshooting</button>
+    </nav>
+
+    <div class="docs-layout docs-index-layout">
+      <aside class="docs-toc docs-sidebar" aria-label="Documentation index">
+        <div class="docs-side-group" data-doc-sidebar="guides">
+          <span>BOT GUIDES</span>
+          <a href="#prefixes" data-doc-link data-doc-tab-target="guides">Prefixes and syntax</a>
+          <a href="#tokens" data-doc-link data-doc-tab-target="guides">Token safety</a>
+        </div>
+        <div class="docs-side-group" data-doc-sidebar="commands" hidden>
+          <span>COMMAND REFERENCE</span>
+          <a href="#help-commands" data-doc-link data-doc-tab-target="commands">Help and discovery</a>
+          <a href="#settings-commands" data-doc-link data-doc-tab-target="commands">Settings</a>
+          <a href="#utility-commands" data-doc-link data-doc-tab-target="commands">Utilities</a>
+          <a href="#text-commands" data-doc-link data-doc-tab-target="commands">Text tools</a>
+          <a href="#presence-commands" data-doc-link data-doc-tab-target="commands">Presence</a>
+        </div>
+        <div class="docs-side-group" data-doc-sidebar="dashboard" hidden>
+          <span>DASHBOARD</span>
+          <a href="#web-dashboard" data-doc-link data-doc-tab-target="dashboard">Browser dashboard</a>
+          <a href="#bot-runtime" data-doc-link data-doc-tab-target="dashboard">Bot runtime</a>
+        </div>
+        <div class="docs-side-group" data-doc-sidebar="troubleshooting" hidden>
+          <span>TROUBLESHOOTING</span>
+          <a href="#commands-not-running" data-doc-link data-doc-tab-target="troubleshooting">Commands not responding</a>
+          <a href="#prefix-not-working" data-doc-link data-doc-tab-target="troubleshooting">Prefix not working</a>
+          <a href="#presence-not-updating" data-doc-link data-doc-tab-target="troubleshooting">Presence not updating</a>
+        </div>
+      </aside>
+
+      <main class="docs-content docs-index-content">
+        <section id="docs-panel-guides" class="docs-panel" role="tabpanel" aria-labelledby="docs-tab-guides" data-doc-panel="guides">
+          <article class="docs-section docs-entry" id="prefixes" data-doc-item data-doc-title="Prefixes and command syntax">
+            <p class="docs-index">GUIDE / 01</p>
+            <h2>Prefixes and command syntax</h2>
+            <p>The default command prefix is <code>;</code>. Put it before a command name, then add arguments separated by spaces. Replace the example prefix with your own if you changed it.</p>
+            <pre><code>;help
+;ping
+;setprefix !
+!help</code></pre>
+            <h3>Read command arguments</h3>
+            <ul class="docs-argument-list">
+              <li><code>&lt;value&gt;</code> means a required argument. Example: <code>;setprefix &lt;symbol&gt;</code>.</li>
+              <li><code>[value]</code> means an optional argument. Example: <code>;config [page]</code>.</li>
+              <li><code>on|off</code> means choose one of the listed values, without typing the pipe. Example: <code>;autodelete off</code>.</li>
+              <li><code>...</code> means more than one value may be supplied.</li>
+            </ul>
+            <p>Examples:</p>
+            <pre><code>;echo hello Aria
+;config 2
+;autodelete delay 5
+;rpc playing name="My Game" details="Ranked match"</code></pre>
+            <p>Text commands join the remaining words into one message. For RPC key/value arguments, put multiword values in quotes. Prefixes can be 1 to 5 non-space characters; <code>setprefix</code> with no argument shows the current prefix.</p>
+          </article>
+
+          <article class="docs-section docs-entry" id="tokens" data-doc-item data-doc-title="Token safety">
+            <p class="docs-index">GUIDE / 02</p>
+            <h2>Keep tokens private</h2>
+            <p>The bot needs a token to authenticate. Keep it on the bot host and submit it only through a trusted, HTTPS-protected instance setup flow. Never send tokens in chat, screenshots, or support requests. Aria encrypts sensitive values in its local config when the cryptography dependency is installed.</p>
+          </article>
+        </section>
+
+        <section id="docs-panel-commands" class="docs-panel" role="tabpanel" aria-labelledby="docs-tab-commands" data-doc-panel="commands" hidden>
+          <header class="docs-panel-heading">
+            <p class="docs-index">REFERENCE / LIVE COMMANDS</p>
+            <h2>Bot commands</h2>
+            <p>Examples use the default <code>;</code> prefix. Replace it with your configured prefix. Use <code>;helpwall</code> in the running bot for its complete registered command list.</p>
+          </header>
+
+          <div class="docs-command-filters" role="tablist" aria-label="Command categories">
+            <button type="button" class="is-active" data-command-filter="all" aria-selected="true">All</button>
+            <button type="button" data-command-filter="help" aria-selected="false">Help</button>
+            <button type="button" data-command-filter="settings" aria-selected="false">Settings</button>
+            <button type="button" data-command-filter="utility" aria-selected="false">Utilities</button>
+            <button type="button" data-command-filter="text" aria-selected="false">Text</button>
+            <button type="button" data-command-filter="presence" aria-selected="false">Presence</button>
+          </div>
+
+          <section class="docs-command-group" id="help-commands" data-command-group="help">
+            <p class="docs-index">COMMANDS / HELP AND DISCOVERY</p>
+            <article class="docs-command-entry" id="cmd-help" data-doc-item data-doc-title="help command" data-doc-summary="Show command help and topic pages">
+              <div class="docs-command-signature"><code>;help [topic]</code><span>Aliases: <code>;h</code>, <code>;commands</code></span></div>
+              <p>Show help. Topic pages include RPC guides such as <code>;help rpc music</code>, <code>;help rpc activity</code>, and <code>;help rpc tools</code>.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-helpwall" data-doc-item data-doc-title="helpwall command" data-doc-summary="List all registered commands">
+              <div class="docs-command-signature"><code>;helpwall</code><span>Alias: <code>;wallcmds</code></span></div>
+              <p>List the commands registered in the current runtime, grouped into pages.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-quickhelp" data-doc-item data-doc-title="quickhelp command" data-doc-summary="Show commonly used commands">
+              <div class="docs-command-signature"><code>;quickhelp</code><span>Quick reference</span></div>
+              <p>Show a short overview of loaded commands. Use <code>;helpwall</code> for the full live list.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-cmdinfo" data-doc-item data-doc-title="cmdinfo command" data-doc-summary="Show command aliases and status">
+              <div class="docs-command-signature"><code>;cmdinfo &lt;command&gt;</code><span>Command details</span></div>
+              <p>Look up a registered command by name to see its aliases and active status.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-categories" data-doc-item data-doc-title="categories command" data-doc-summary="Show command category counts">
+              <div class="docs-command-signature"><code>;categories</code><span>Command overview</span></div>
+              <p>Show the runtime command count and a category-style breakdown.</p>
+            </article>
+          </section>
+
+          <section class="docs-command-group" id="settings-commands" data-command-group="settings">
+            <p class="docs-index">COMMANDS / SETTINGS</p>
+            <article class="docs-command-entry" id="cmd-ping" data-doc-item data-doc-title="ping command" data-doc-summary="Check API Gateway and website latency">
+              <div class="docs-command-signature"><code>;ping</code><span>Aliases: <code>;ms</code>, <code>;latency</code>, <code>;lat</code></span></div>
+              <p>Report API, gateway, and website latency.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-setprefix" data-doc-item data-doc-title="setprefix command" data-doc-summary="Change the command prefix">
+              <div class="docs-command-signature"><code>;setprefix &lt;symbol&gt;</code><span>Alias: <code>;prefix</code></span></div>
+              <p>Change the command prefix. Use 1 to 5 non-space characters; run without an argument to display the current prefix.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-config" data-doc-item data-doc-title="config command" data-doc-summary="View runtime configuration pages">
+              <div class="docs-command-signature"><code>;config [page]</code><span>Alias: <code>;cf</code></span></div>
+              <p>View runtime configuration and status pages. The dashboard provides the visual controls.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-autodelete" data-doc-item data-doc-title="autodelete command" data-doc-summary="Configure automatic command reply deletion">
+              <div class="docs-command-signature"><code>;autodelete on|off</code><span>Alias: <code>;ad</code></span></div>
+              <p>Enable or disable automatic deletion of command replies. Set the delay with <code>;autodelete delay &lt;seconds&gt;</code>.</p>
+            </article>
+          </section>
+
+          <section class="docs-command-group" id="utility-commands" data-command-group="utility">
+            <p class="docs-index">COMMANDS / UTILITIES</p>
+            <article class="docs-command-entry" id="cmd-echo" data-doc-item data-doc-title="echo command" data-doc-summary="Echo text">
+              <div class="docs-command-signature"><code>;echo &lt;text&gt;</code><span>Text utility</span></div>
+              <p>Send the supplied text back as a formatted response.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-length" data-doc-item data-doc-title="length command" data-doc-summary="Count text characters and words">
+              <div class="docs-command-signature"><code>;length &lt;text&gt;</code><span>Text utility</span></div>
+              <p>Show the character and word count for the supplied text.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-time" data-doc-item data-doc-title="time command" data-doc-summary="Show local time date and Unix time">
+              <div class="docs-command-signature"><code>;time</code><span>Date and time</span></div>
+              <p>Show the current date, time, and Unix timestamp.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-hash" data-doc-item data-doc-title="hash command" data-doc-summary="Hash supplied text with MD5 or SHA256">
+              <div class="docs-command-signature"><code>;hash &lt;text&gt;</code><span>Aliases: <code>;md5</code>, <code>;sha256</code></span></div>
+              <p>Generate a text hash. Choose an alias to select the hash algorithm.</p>
+            </article>
+          </section>
+
+          <section class="docs-command-group" id="text-commands" data-command-group="text">
+            <p class="docs-index">COMMANDS / TEXT TOOLS</p>
+            <article class="docs-command-entry" id="cmd-formatting" data-doc-item data-doc-title="text formatting commands" data-doc-summary="Bold italic underline strike code spoiler">
+              <div class="docs-command-signature"><code>;bold &lt;text&gt;</code><span>Also: italic, underline, strike, code, spoiler</span></div>
+              <p>Format text as bold, italic, underlined, struck through, inline code, or spoiler text.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-case" data-doc-item data-doc-title="upper lower mock commands" data-doc-summary="Change text case and mocking style">
+              <div class="docs-command-signature"><code>;upper &lt;text&gt;</code><span>Also: <code>;lower</code>, <code>;mock</code></span></div>
+              <p>Convert text to uppercase or lowercase, or apply alternating-case formatting.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-transform" data-doc-item data-doc-title="reverse flip text commands" data-doc-summary="Reverse or flip text">
+              <div class="docs-command-signature"><code>;reverse &lt;text&gt;</code><span>Also: <code>;flip</code></span></div>
+              <p>Reverse text or render it using the available upside-down character mapping.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-base64" data-doc-item data-doc-title="base64 encode decode commands" data-doc-summary="Encode or decode Base64 text">
+              <div class="docs-command-signature"><code>;base64encode &lt;text&gt;</code><span>Also: <code>;base64decode</code></span></div>
+              <p>Encode text as Base64 or decode a Base64 string.</p>
+            </article>
+          </section>
+
+          <section class="docs-command-group" id="presence-commands" data-command-group="presence">
+            <p class="docs-index">COMMANDS / PRESENCE</p>
+            <article class="docs-command-entry" id="cmd-rpc" data-doc-item data-doc-title="rpc rich presence command" data-doc-summary="Set activity presets and rotations">
+              <div class="docs-command-signature"><code>;rpc</code><span>Alias: <code>;rich_presence</code></span></div>
+              <p>Run <code>;rpc</code> for usage. Help topics include <code>;help rpc activity</code>, <code>;help rpc music</code>, <code>;help rpc custom</code>, and <code>;help rpc tools</code>.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-rpc-presets" data-doc-item data-doc-title="rpc preset save load list delete" data-doc-summary="Save and reuse presence presets">
+              <div class="docs-command-signature"><code>;rpc preset save|load|list|delete &lt;name&gt;</code><span>Presence presets</span></div>
+              <p>Save an activity by name, list saved presets, load one, or delete it.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-rpc-rotation" data-doc-item data-doc-title="rpc rotation set start stop status clear" data-doc-summary="Rotate presence presets on an interval">
+              <div class="docs-command-signature"><code>;rpc rotation set &lt;seconds&gt; &lt;preset,...&gt;</code><span>Also: start, stop, status, clear</span></div>
+              <p>Configure a timed rotation of saved presets, then start or stop it.</p>
+            </article>
+            <article class="docs-command-entry" id="cmd-rpc-stack" data-doc-item data-doc-title="rpc stack add list remove apply clear" data-doc-summary="Stack multiple activities">
+              <div class="docs-command-signature"><code>;rpc stack add &lt;type&gt; [key=value ...]</code><span>Up to five activities</span></div>
+              <p>List, add, remove, apply, or clear stacked activities. Quote values containing spaces.</p>
+            </article>
+          </section>
+        </section>
+
+        <section id="docs-panel-dashboard" class="docs-panel" role="tabpanel" aria-labelledby="docs-tab-dashboard" data-doc-panel="dashboard" hidden>
+          <article class="docs-section docs-entry" id="web-dashboard" data-doc-item data-doc-title="Browser dashboard">
+            <p class="docs-index">DASHBOARD / WEB</p>
+            <h2>Browser dashboard</h2>
+            <p>Aria serves the dashboard and public website from the same web server. Open <code>/dashboard</code> to sign in; signed-out visitors are redirected to the login page.</p>
+            <a class="docs-inline-link" href="/login?next=/dashboard">Sign in to the dashboard <span aria-hidden="true">&rarr;</span></a>
+          </article>
+          <article class="docs-section docs-entry" id="bot-runtime" data-doc-item data-doc-title="Bot runtime and dashboard">
+            <p class="docs-index">DASHBOARD / BOT RUNTIME</p>
+            <h2>The dashboard and bot runtime</h2>
+            <p>The dashboard is the browser control surface for the Aria process running on its configured host. Use it to inspect status and manage the features enabled for that account.</p>
+          </article>
+        </section>
+
+        <section id="docs-panel-troubleshooting" class="docs-panel" role="tabpanel" aria-labelledby="docs-tab-troubleshooting" data-doc-panel="troubleshooting" hidden>
+          <article class="docs-section docs-entry" id="commands-not-running" data-doc-item data-doc-title="Commands not responding">
+            <p class="docs-index">TROUBLESHOOTING / BOT</p>
+            <h2>Commands are not responding</h2>
+            <p>Confirm Aria is running and connected, check the current prefix with <code>;setprefix</code>, then try <code>;ping</code>. Use <code>;helpwall</code> to confirm a command is registered.</p>
+          </article>
+          <article class="docs-section docs-entry" id="prefix-not-working" data-doc-item data-doc-title="Prefix not working">
+            <p class="docs-index">TROUBLESHOOTING / COMMANDS</p>
+            <h2>The command prefix is not working</h2>
+            <p>The default prefix is <code>;</code>, but it can be changed. Run <code>;setprefix</code> with no argument in the current prefix to see the configured value.</p>
+          </article>
+          <article class="docs-section docs-entry" id="presence-not-updating" data-doc-item data-doc-title="Presence activity not updating">
+            <p class="docs-index">TROUBLESHOOTING / PRESENCE</p>
+            <h2>Presence is not updating</h2>
+            <p>Run <code>;rpc</code> for supported syntax, then use the matching <code>;help rpc</code> topic. Quote multiword values in key/value activity arguments.</p>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="docs-search-dialog" class="docs-search-dialog" aria-labelledby="docs-search-title">
+      <div class="docs-search-heading">
+        <label id="docs-search-title" for="docs-search-input">Search documentation</label>
+        <button id="docs-search-close" type="button" aria-label="Close search">Esc</button>
+      </div>
+      <input id="docs-search-input" type="search" placeholder="Search guides, commands, and topics" autocomplete="off" />
+      <p id="docs-search-status" class="docs-search-status" aria-live="polite">Search across guides and command reference.</p>
+      <div id="docs-search-results" class="docs-search-results" role="listbox" aria-label="Documentation results"></div>
+    </dialog>
+
+    <footer class="home-footer">
+      <div class="home-footer-brand">ARIA</div>
+      <div class="home-footer-links">
+        <a href="/home">Home</a>
+        <a href="/features">Features</a>
+        <a href="/login?next=/dashboard">Dashboard</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/tos">Terms</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
